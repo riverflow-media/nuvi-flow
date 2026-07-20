@@ -12,8 +12,8 @@ jobs:
   build-windows:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
         with:
           node-version: 22
           cache: npm
@@ -22,7 +22,7 @@ jobs:
       - run: npm run typecheck
       - run: npm run make:windows
       - name: Upload workflow artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: personal-media-addon-windows
           path: out/make/**/*
@@ -35,4 +35,3 @@ jobs:
         run: |
           $assets = Get-ChildItem out/make -Recurse -File | ForEach-Object { $_.FullName }
           gh release create $env:GITHUB_REF_NAME $assets --generate-notes --title "Personal Media Addon $env:GITHUB_REF_NAME"
-
