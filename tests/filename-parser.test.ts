@@ -5,7 +5,8 @@ describe('movie filename parsing', () => {
   it.each([
     ['Interstellar (2014).mkv', 'Interstellar', 2014],
     ['Interstellar.2014.1080p.BluRay.x265.mkv', 'Interstellar', 2014],
-    ['The Batman (2022)/The Batman (2022).mkv', 'The Batman', 2022]
+    ['The Batman (2022)/The Batman (2022).mkv', 'The Batman', 2022],
+    ['Movies\\The Batman (2022)\\The Batman (2022).mkv', 'The Batman', 2022]
   ])('parses %s', (input, title, year) => {
     expect(parseMovieFilename(input)).toMatchObject({ title, year });
   });
@@ -22,6 +23,7 @@ describe('episode filename parsing', () => {
     ['Show Name S01E01.mkv', 1, 1, 1],
     ['Show.Name.1x01.mkv', 1, 1, 1],
     ['Show Name/Season 01/Show Name - S01E01 - Pilot.mkv', 1, 1, 1],
+    ['Show Name\\Season 01\\Show Name - S01E01 - Pilot.mkv', 1, 1, 1],
     ['Show.Name.S01E01-E02.1080p.mkv', 1, 1, 2],
     ['Show Name S00E03.mkv', 0, 3, 3]
   ])('parses %s', (input, season, start, end) => {
@@ -56,6 +58,7 @@ describe('matching confidence and ignore rules', () => {
   it('ignores sample, trailer, temporary, and hidden files', () => {
     expect(shouldIgnorePath('/movies/Film/sample.mkv')).toBe(true);
     expect(shouldIgnorePath('/movies/.hidden/Film.mkv')).toBe(true);
+    expect(shouldIgnorePath('C:\\Movies\\.hidden\\Film.mkv')).toBe(true);
     expect(shouldIgnorePath('/movies/Film.trailer.mp4')).toBe(true);
     expect(shouldIgnorePath('/movies/Film.mkv')).toBe(false);
   });

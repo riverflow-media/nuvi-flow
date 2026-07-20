@@ -37,7 +37,13 @@ const CODEC_PATTERN = /\b(x264|x265|h[ .]?264|h[ .]?265|hevc|avc|av1|xvid|divx)\
 const SOURCE_PATTERN = /\b(blu-?ray|bdrip|brrip|web[ .-]?dl|webrip|hdtv|dvd(?:rip)?|remux|uhd)\b/i;
 
 function withoutExtension(input: string): string {
-  return path.basename(input, path.extname(input));
+  const basename = splitPathSegments(input).at(-1) ?? input;
+  const extension = path.extname(basename);
+  return extension ? basename.slice(0, -extension.length) : basename;
+}
+
+function splitPathSegments(input: string): string[] {
+  return input.split(/[\\/]+/).filter(Boolean);
 }
 
 function cleanSeparators(input: string): string {
@@ -67,7 +73,7 @@ function removeTechnicalTail(input: string): string {
 }
 
 function inferSeriesTitleFromPath(filePath: string): string {
-  const segments = filePath.split(path.sep).filter(Boolean).slice(0, -1).reverse();
+  const segments = splitPathSegments(filePath).slice(0, -1).reverse();
   for (const segment of segments) {
     let candidate = removeTechnicalTail(cleanSeparators(segment));
     candidate = candidate
@@ -157,7 +163,7 @@ export function parseEpisodeFilename(filePath: string): ParsedEpisode | null {
 
   let title = raw.slice(0, match.index).trim();
   if (!title || /^(?:season|series)\s+\d+$/i.test(title)) {
-    const segments = filePath.split(path.sep).filter(Boolean);
+    const segments = splitPathSegments(filePath);
     const seasonIndex = segments.findIndex((part) => /^(?:season|series)\s*\d+$/i.test(part));
     if (seasonIndex > 0) title = cleanSeparators(segments[seasonIndex - 1] ?? '');
     else if (segments.length > 1) title = cleanSeparators(segments.at(-2) ?? '');
@@ -219,8 +225,8 @@ export function isMediaFilename(name: string): boolean {
 }
 
 export function shouldIgnorePath(filePath: string): boolean {
-  const segments = filePath.split(path.sep);
-  const basename = path.basename(filePath, path.extname(filePath));
+  const segments = splitPathSegments(filePath);
+  const basename = withoutExtension(filePath);
   return segments.some((part) => part.startsWith('.'))
     || /(?:^|[ ._-])(sample|trailer|temp|partial)(?:$|[ ._-])/i.test(basename)
     || /\.(?:part|tmp|crdownload)$/i.test(filePath);
