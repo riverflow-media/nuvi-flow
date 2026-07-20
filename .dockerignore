@@ -1,0 +1,12 @@
+.git
+.github
+desktop
+node_modules
+dist
+out
+data
+.env
+*.log
+*.db*
+tests
+

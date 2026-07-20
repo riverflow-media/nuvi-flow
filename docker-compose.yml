@@ -1,0 +1,93 @@
+name: personal-media-addon
+
+services:
+  personal-media-addon:
+    image: ${IMAGE_NAME:-personal-media-addon:local}
+    build:
+      context: .
+    container_name: personal-media-addon
+    restart: unless-stopped
+    init: true
+    platform: linux/amd64
+    ports:
+      - "${PORT:-60500}:60500"
+    environment:
+      PORT: "60500"
+      BASE_URL: ${BASE_URL:-http://localhost:60500}
+      TMDB_API_KEY: ${TMDB_API_KEY:-}
+      ADMIN_USERNAME: ${ADMIN_USERNAME:-admin}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?Set ADMIN_PASSWORD in .env}
+      SESSION_SECRET: ${SESSION_SECRET:?Set SESSION_SECRET in .env}
+      STREAM_SECRET: ${STREAM_SECRET:?Set STREAM_SECRET in .env}
+      DATABASE_PATH: /app/data/media.db
+      MOVIES_PATH: /media/movies
+      TV_PATH: /media/tv
+      FFPROBE_PATH: /app/node_modules/ffprobe-static/bin/linux/x64/ffprobe
+      SCAN_INTERVAL_MINUTES: ${SCAN_INTERVAL_MINUTES:-30}
+      MINIMUM_FILE_SIZE_MB: ${MINIMUM_FILE_SIZE_MB:-50}
+      SCAN_CONCURRENCY: ${SCAN_CONCURRENCY:-2}
+      WATCH_MEDIA: ${WATCH_MEDIA:-true}
+      SCAN_ON_STARTUP: ${SCAN_ON_STARTUP:-true}
+      TRUST_PROXY: "false"
+      LOG_LEVEL: info
+    volumes:
+      - personal-media-data:/app/data
+      - ${MOVIES_PATH:?Set MOVIES_PATH in .env}:/media/movies:ro
+      - "${TV_PATH:?Set TV_PATH in .env}:/media/tv:ro"
+    read_only: true
+    tmpfs:
+      - /tmp:size=256m,mode=1777
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:60500/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      start_period: 20s
+      retries: 3
+    stop_grace_period: 30s
+    x-casaos:
+      envs:
+        - container: BASE_URL
+          description:
+            en_US: URL used in addon manifests and stream links.
+        - container: TMDB_API_KEY
+          description:
+            en_US: Optional TMDB credential; automatic metadata works when blank.
+      ports:
+        - container: "60500"
+          description:
+            en_US: Dashboard, addon API, and streaming port.
+      volumes:
+        - container: /app/data
+          description:
+            en_US: Writable database and settings volume.
+        - container: /media/movies
+          description:
+            en_US: Read-only Movies library.
+        - container: /media/tv
+          description:
+            en_US: Read-only TV Shows library.
+
+volumes:
+  personal-media-data:
+
+x-casaos:
+  id: community.personalmediaaddon
+  main: personal-media-addon
+  index: /admin
+  port_map: "60500"
+  scheme: http
+  icon: https://cdn.jsdelivr.net/gh/walkxcode/dashboard-icons/png/stremio.png
+  title:
+    en_US: Personal Media Addon
+  tagline:
+    en_US: Stream your own movie and TV library.
+  description:
+    en_US: A private Stremio-compatible server with automatic metadata and read-only media mounts.
+  author: Personal Media Addon contributors
+  category: Media
+  architectures:
+    - amd64
+  version: "1.1.0"
+

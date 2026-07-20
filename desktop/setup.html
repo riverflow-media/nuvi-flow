@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Set up Personal Media Addon</title>
+  <style>
+    :root { color-scheme: dark; font-family: Inter, "Segoe UI", sans-serif; background: #0b1020; color: #edf2ff; }
+    * { box-sizing: border-box; }
+    body { margin: 0; min-height: 100vh; background: radial-gradient(circle at top right, #243866 0, #0b1020 46%); }
+    main { width: min(680px, calc(100% - 48px)); margin: 0 auto; padding: 42px 0; }
+    .mark { width: 56px; height: 56px; border-radius: 17px; display: grid; place-items: center; background: linear-gradient(135deg, #7c5cff, #24c7d9); box-shadow: 0 18px 45px #101638; font-size: 26px; }
+    h1 { margin: 22px 0 8px; font-size: 30px; letter-spacing: -.03em; }
+    .lead { margin: 0 0 30px; color: #a9b7d8; line-height: 1.55; }
+    .card { padding: 24px; border: 1px solid #2b385b; border-radius: 18px; background: rgba(18, 27, 52, .9); box-shadow: 0 24px 70px rgba(0, 0, 0, .24); }
+    label { display: block; margin: 0 0 7px; color: #c9d5ef; font-size: 13px; font-weight: 650; }
+    .field { margin-bottom: 18px; }
+    .row { display: grid; grid-template-columns: 1fr auto; gap: 9px; }
+    input { width: 100%; height: 43px; border: 1px solid #35466d; border-radius: 10px; padding: 0 12px; background: #0e1730; color: #f7f9ff; outline: none; }
+    input:focus { border-color: #7c75ff; box-shadow: 0 0 0 3px rgba(124, 117, 255, .16); }
+    button { height: 43px; border: 0; border-radius: 10px; padding: 0 17px; font-weight: 700; cursor: pointer; }
+    .browse { background: #253454; color: #eaf0ff; }
+    .save { width: 100%; background: linear-gradient(135deg, #765cff, #28b9d1); color: white; font-size: 15px; }
+    .save:disabled { opacity: .55; cursor: wait; }
+    .hint { color: #8090b4; font-size: 12px; margin-top: 7px; line-height: 1.45; }
+    .check { display: flex; align-items: center; gap: 9px; margin: 4px 0 20px; color: #c9d5ef; font-size: 13px; }
+    .check input { width: 17px; height: 17px; }
+    #error { min-height: 20px; margin: 0 0 12px; color: #ff98a4; font-size: 13px; }
+  </style>
+</head>
+<body>
+  <main>
+    <div class="mark">▶</div>
+    <h1>Your library, your server.</h1>
+    <p class="lead">Choose the folders to scan. Personal Media Addon only reads your movie and TV files; its database and settings are stored separately in your Windows profile.</p>
+    <form class="card" id="setup">
+      <div class="field">
+        <label for="moviesPath">Movies folder</label>
+        <div class="row"><input id="moviesPath" required><button class="browse" type="button" data-folder="movies">Browse</button></div>
+      </div>
+      <div class="field">
+        <label for="tvPath">TV Shows folder</label>
+        <div class="row"><input id="tvPath" required><button class="browse" type="button" data-folder="tv">Browse</button></div>
+      </div>
+      <div class="field">
+        <label for="adminPassword">Admin password</label>
+        <input id="adminPassword" type="password" minlength="12" autocomplete="new-password">
+        <div class="hint" id="passwordHint">Use at least 12 characters. This is encrypted with Windows account protection.</div>
+      </div>
+      <div class="field">
+        <label for="baseUrl">Addon base URL</label>
+        <input id="baseUrl" type="url" required>
+        <div class="hint">Keep the local default when the player is on this PC. For other devices, use this PC's LAN address, for example http://192.168.1.50:60500.</div>
+      </div>
+      <div class="field">
+        <label for="port">Port</label>
+        <input id="port" type="number" min="1024" max="65535" required>
+      </div>
+      <label class="check"><input id="startAtLogin" type="checkbox"> Start Personal Media Addon when I sign in to Windows</label>
+      <div id="error" role="alert"></div>
+      <button class="save" type="submit">Save and open dashboard</button>
+    </form>
+  </main>
+  <script src="setup.js"></script>
+</body>
+</html>

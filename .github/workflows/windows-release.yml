@@ -1,0 +1,38 @@
+name: Windows release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm test
+      - run: npm run typecheck
+      - run: npm run make:windows
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: personal-media-addon-windows
+          path: out/make/**/*
+          if-no-files-found: error
+      - name: Publish files to GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $assets = Get-ChildItem out/make -Recurse -File | ForEach-Object { $_.FullName }
+          gh release create $env:GITHUB_REF_NAME $assets --generate-notes --title "Personal Media Addon $env:GITHUB_REF_NAME"
+
