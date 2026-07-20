@@ -15,7 +15,7 @@ Personal Media Addon turns folders of movies and TV shows into a private, search
 
 ## Windows
 
-Download `PersonalMediaAddonSetup.exe` from the latest GitHub release and run it. On first launch:
+Download the `.Setup.exe` file from the [latest GitHub release](https://github.com/Squipy411/personal-media-addon/releases/latest) and run it. On first launch:
 
 1. Choose the Movies folder.
 2. Choose the TV Shows folder.
@@ -72,7 +72,7 @@ The Compose definition enforces these storage boundaries:
 
 The container also uses a read-only root filesystem, a non-root account, `no-new-privileges`, and a temporary in-memory `/tmp`.
 
-Once the repository's container workflow publishes an image, set `IMAGE_NAME=ghcr.io/squipy411/personal-media-addon:latest` in `.env` and run `docker compose pull && docker compose up -d`. Remove the `build:` block if you want pull-only deployments.
+The public container is available at `ghcr.io/squipy411/personal-media-addon`. Set `IMAGE_NAME=ghcr.io/squipy411/personal-media-addon:latest` in `.env` and run `docker compose pull && docker compose up -d`. Remove the `build:` block if you want pull-only deployments. To pin this release, use `ghcr.io/squipy411/personal-media-addon:1.1.0`.
 
 ## Add it to Stremio or Nuvio
 
