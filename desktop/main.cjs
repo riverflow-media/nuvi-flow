@@ -3,6 +3,7 @@ const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
+const { resolveFfprobePath } = require('./ffprobe-path.cjs');
 
 if (require('electron-squirrel-startup')) app.quit();
 
@@ -68,8 +69,7 @@ async function stopServer() {
 async function startServer(preferences) {
   const dataDirectory = path.join(app.getPath('userData'), 'data');
   fs.mkdirSync(dataDirectory, { recursive: true });
-  let ffprobePath = require('ffprobe-static');
-  if (app.isPackaged) ffprobePath = ffprobePath.replace('app.asar', 'app.asar.unpacked');
+  const ffprobePath = resolveFfprobePath(require('ffprobe-static'), app.isPackaged);
 
   const environment = {
     PORT: String(preferences.port),

@@ -72,7 +72,21 @@ The Compose definition enforces these storage boundaries:
 
 The container also uses a read-only root filesystem, a non-root account, `no-new-privileges`, and a temporary in-memory `/tmp`.
 
-The public container is available at `ghcr.io/squipy411/personal-media-addon`. Set `IMAGE_NAME=ghcr.io/squipy411/personal-media-addon:latest` in `.env` and run `docker compose pull && docker compose up -d`. Remove the `build:` block if you want pull-only deployments. To pin this release, use `ghcr.io/squipy411/personal-media-addon:1.1.0`.
+The public container is available at `ghcr.io/squipy411/personal-media-addon`. Set `IMAGE_NAME=ghcr.io/squipy411/personal-media-addon:latest` in `.env` and run `docker compose pull && docker compose up -d`. Remove the `build:` block if you want pull-only deployments. To pin this release, use `ghcr.io/squipy411/personal-media-addon:1.1.1`.
+
+### Docker Desktop on Windows
+
+Docker Desktop can run the container directly on Windows 11, so installing the desktop `.exe` is optional. Internal, USB, and external HDD/SSD folders can be bind-mounted into the container as long as the drive is available to Docker Desktop.
+
+Use forward-slash Windows paths in `.env`:
+
+```dotenv
+MOVIES_PATH=E:/Media/Movies
+TV_PATH="E:/Media/TV Shows"
+BASE_URL=http://YOUR-WINDOWS-PC-LAN-IP:60500
+```
+
+Run `docker compose up -d`, then open `http://localhost:60500/admin`. The included Compose definition appends `:ro` to both media mounts, so the container can read the selected folders but cannot write to them. Only the `personal-media-data` volume is writable. If Docker reports that a drive cannot be shared, allow that drive or folder in Docker Desktop settings and retry.
 
 ## Add it to Stremio or Nuvio
 
