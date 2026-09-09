@@ -256,14 +256,121 @@ export function registerAdminRoutes(
     let baseUrl: URL;
     try { baseUrl = new URL(body.baseUrl || ''); } catch { return reply.code(400).send({ error: 'BASE_URL must be a valid URL' }); }
     if (!['http:', 'https:'].includes(baseUrl.protocol)) return reply.code(400).send({ error: 'BASE_URL must use HTTP or HTTPS' });
+
     const numeric: Array<[string, number]> = [
-      ['scanIntervalMinutes', 1], ['minimumFileSizeMb', 0], ['streamTokenExpiryHours', 1]
+      ['scanIntervalMinutes', 1],
+      ['minimumFileSizeMb', 0],
+      ['streamTokenExpiryHours', 1]
     ];
-    for (const [key, minimum] of numeric) if (!Number.isFinite(Number(body[key])) || Number(body[key]) < minimum) return reply.code(400).send({ error: `${key} is invalid` });
-    for (const key of ['baseUrl', 'moviesPath', 'tvPath', 'scanIntervalMinutes', 'minimumFileSizeMb', 'streamTokenExpiryHours', 'longLivedStreamTokens', 'adminUsername']) {
-      if (typeof body[key] === 'string' && body[key]!.trim()) settings.set(key, body[key]!);
+
+    for (const [key, minimum] of numeric) {
+      if (!Number.isFinite(Number(body[key])) || Number(body[key]) < minimum) {
+        return reply.code(400).send({ error: `${key} is invalid` });
+      }
     }
-    if (body.tmdbApiKey?.trim()) settings.set('tmdbApiKey', body.tmdbApiKey);
+
+    for (const key of [
+      'baseUrl',
+      'moviesPath',
+      'tvPath',
+      'scanIntervalMinutes',
+      'minimumFileSizeMb',
+      'streamTokenExpiryHours',
+      'longLivedStreamTokens',
+      'adminUsername'
+    ]) {
+      if (typeof body[key] === 'string' && body[key]!.trim()) {
+        settings.set(key, body[key]!);
+      }
+    }
+
+    if (body.tmdbApiKey?.trim()) {
+      settings.set('tmdbApiKey', body.tmdbApiKey);
+    }
+
+    // Automatic request toggles.
+    for (const key of [
+      'autoRequestEnabled',
+      'radarrEnabled',
+      'sonarrEnabled',
+      'sonarrSeparateAnimeRoot'
+    ]) {
+      if (body[key] === 'true' || body[key] === 'false') {
+        settings.set(key, body[key]!);
+      }
+    }
+
+    // Radarr/Sonarr URLs may be blank while an integration is disabled.
+    for (const [key, label] of [
+      ['radarrUrl', 'Radarr'],
+      ['sonarrUrl', 'Sonarr']
+    ] as const) {
+      if (typeof body[key] !== 'string') continue;
+
+      const value = body[key]!.trim();
+
+      if (value) {
+        let parsed: URL;
+
+        try {
+          parsed = new URL(value);
+        } catch {
+          return reply.code(400).send({
+            error: `${label} URL must be a valid URL`
+          });
+        }
+
+        if (!['http:', 'https:'].includes(parsed.protocol)) {
+          return reply.code(400).send({
+            error: `${label} URL must use HTTP or HTTPS`
+          });
+        }
+      }
+
+      settings.set(key, value);
+    }
+
+    // Root folders are paths returned by Radarr/Sonarr and may be cleared.
+    for (const key of [
+      'radarrRootFolderPath',
+      'sonarrRootFolderPath',
+      'sonarrAnimeRootFolderPath'
+    ]) {
+      if (typeof body[key] === 'string') {
+        settings.set(key, body[key]!);
+      }
+    }
+
+    // Profile ID 0 means "not selected yet".
+    for (const key of [
+      'radarrQualityProfileId',
+      'sonarrQualityProfileId'
+    ]) {
+      if (typeof body[key] !== 'string') continue;
+
+      const value = Number(body[key]);
+
+      if (
+        !Number.isInteger(value) ||
+        value < 0
+      ) {
+        return reply.code(400).send({
+          error: `${key} is invalid`
+        });
+      }
+
+      settings.set(key, String(value));
+    }
+
+    // Blank API-key fields preserve the already stored secret.
+    if (body.radarrApiKey?.trim()) {
+      settings.set('radarrApiKey', body.radarrApiKey);
+    }
+
+    if (body.sonarrApiKey?.trim()) {
+      settings.set('sonarrApiKey', body.sonarrApiKey);
+    }
+
     if (body.newPassword) {
       if (body.newPassword.length < 10) return reply.code(400).send({ error: 'The admin password must be at least 10 characters' });
       settings.set('adminPasswordHash', await hashPassword(body.newPassword));
