@@ -291,6 +291,107 @@ export class RequestService {
     );
   }
 
+  retryFailed(
+    requestId: string
+  ): boolean {
+    const existing = this.database.sqlite
+      .prepare(
+        `SELECT *
+         FROM media_requests
+         WHERE id=?`
+      )
+      .get(requestId) as
+      MediaRequestRow | undefined;
+
+    if (
+      !existing ||
+      existing.status !== 'failed'
+    ) {
+      return false;
+    }
+
+    if (
+      existing.media_type === 'movie' &&
+      !this.settings.radarrEnabled
+    ) {
+      throw new Error(
+        'Radarr is disabled.'
+      );
+    }
+
+    if (
+      existing.media_type === 'series' &&
+      !this.settings.sonarrEnabled
+    ) {
+      throw new Error(
+        'Sonarr is disabled.'
+      );
+    }
+
+    const logicalKey =
+      existing.request_key;
+
+    if (
+      this.inflight.has(logicalKey)
+    ) {
+      return false;
+    }
+
+    const now = Date.now();
+
+    this.database.sqlite
+      .prepare(
+        `UPDATE media_requests
+         SET status='pending',
+             message=NULL,
+             attempts=attempts+1,
+             last_attempt_at=?,
+             updated_at=?
+         WHERE id=?`
+      )
+      .run(
+        now,
+        now,
+        existing.id
+      );
+
+    const job = this.process(
+      existing.media_type,
+      existing.stremio_id,
+      existing.request_key
+    )
+      .catch((error) => {
+        this.markFailed(
+          existing.request_key,
+          error
+        );
+
+        this.logger.warn(
+          {
+            requestKey:
+              existing.request_key,
+            error:
+              error instanceof Error
+                ? error.message
+                : String(error)
+          },
+          'Manual media request retry failed'
+        );
+      })
+      .finally(() => {
+        this.inflight.delete(
+          logicalKey
+        );
+      });
+
+    this.inflight.set(
+      logicalKey,
+      job
+    );
+
+    return true;
+  }
+
   private async process(
     type: 'movie' | 'series',
     id: string,
