@@ -779,7 +779,11 @@ export class RequestService {
 
           animeQualityProfileId:
             this.settings
-              .sonarrAnimeQualityProfileId
+              .sonarrAnimeQualityProfileId,
+
+          monitorWholeSeries:
+            this.settings
+              .sonarrMonitorWholeSeries
         }
       );
 

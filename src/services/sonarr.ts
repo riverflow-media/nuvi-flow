@@ -40,6 +40,13 @@ export interface SonarrSeries {
 
   seriesType?: SonarrSeriesType;
   seasonFolder?: boolean;
+  monitorNewItems?: string;
+
+  seasons?: Array<{
+    seasonNumber: number;
+    monitored: boolean;
+    [key: string]: unknown;
+  }>;
 
   [key: string]: unknown;
 }
@@ -65,6 +72,8 @@ export interface AddSonarrSeriesOptions {
 
   qualityProfileId: number;
   animeQualityProfileId?: number;
+
+  monitorWholeSeries?: boolean;
 }
 
 export interface SonarrSeriesIdentifiers {
@@ -275,15 +284,29 @@ export class SonarrClient {
       rootFolderPath,
       qualityProfileId,
 
-      // We request individual episodes ourselves.
-      monitored: false,
+      /*
+       * Whole-series monitoring does not imply a backlog
+       * search. Nuvi-Flow still triggers only the requested
+       * episode search below.
+       */
+      monitored:
+        Boolean(options.monitorWholeSeries),
+
+      monitorNewItems:
+        options.monitorWholeSeries
+          ? 'all'
+          : 'none',
+
       seasonFolder: true,
 
       seriesType:
         lookup.seriesType ?? 'standard',
 
       addOptions: {
-        monitor: 'none',
+        monitor:
+          options.monitorWholeSeries
+            ? 'all'
+            : 'none',
         searchForMissingEpisodes: false,
         searchForCutoffUnmetEpisodes: false
       }
@@ -424,6 +447,97 @@ export class SonarrClient {
     return episode;
   }
 
+  async allEpisodes(
+    seriesId: number
+  ): Promise<SonarrEpisode[]> {
+    if (
+      !Number.isInteger(seriesId) ||
+      seriesId <= 0
+    ) {
+      throw new Error(
+        'A valid Sonarr series ID is required.'
+      );
+    }
+
+    return this.api.get<SonarrEpisode[]>(
+      `/api/v3/episode?seriesId=${seriesId}`
+    );
+  }
+
+  async monitorWholeSeries(
+    seriesId: number
+  ): Promise<SonarrSeries> {
+    if (
+      !Number.isInteger(seriesId) ||
+      seriesId <= 0
+    ) {
+      throw new Error(
+        'A valid Sonarr series ID is required.'
+      );
+    }
+
+    const current =
+      await this.api.get<SonarrSeries>(
+        `/api/v3/series/${seriesId}`
+      );
+
+    const updated =
+      await this.api.put<SonarrSeries>(
+        `/api/v3/series/${seriesId}`,
+        {
+          ...current,
+          monitored: true,
+          monitorNewItems: 'all',
+
+          /*
+           * Follow Sonarr's normal "all episodes" behavior:
+           * monitor regular seasons while leaving Specials
+           * (season 0) as-is.
+           */
+          seasons:
+            (current.seasons ?? []).map(
+              season =>
+                season.seasonNumber === 0
+                  ? season
+                  : {
+                      ...season,
+                      monitored: true
+                    }
+            )
+        }
+      );
+
+    /*
+     * Explicitly monitor existing episode records too. This
+     * makes the behavior reliable for series that were already
+     * in Sonarr before Nuvi-Flow touched them.
+     */
+    const episodes =
+      await this.allEpisodes(seriesId);
+
+    const episodeIds =
+      episodes
+        .filter(
+          episode =>
+            episode.seasonNumber > 0
+        )
+        .map(
+          episode => episode.id
+        );
+
+    if (episodeIds.length > 0) {
+      await this.api.put(
+        '/api/v3/episode/monitor',
+        {
+          episodeIds,
+          monitored: true
+        }
+      );
+    }
+
+    return updated;
+  }
+
   async monitorEpisode(
     episodeId: number
   ): Promise<void> {
@@ -538,25 +652,37 @@ export class SonarrClient {
           );
     }
 
+    let series =
+      resolved.series;
+
+    if (options.monitorWholeSeries) {
+      series =
+        await this.monitorWholeSeries(
+          resolved.series.id
+        );
+    }
+
     if (episode.hasFile) {
       return {
-        series: resolved.series,
+        series,
         episode,
         seriesAdded: resolved.added,
         searchTriggered: false
       };
     }
 
-    await this.monitorEpisode(
-      episode.id
-    );
+    if (!options.monitorWholeSeries) {
+      await this.monitorEpisode(
+        episode.id
+      );
+    }
 
     await this.searchEpisode(
       episode.id
     );
 
     return {
-      series: resolved.series,
+      series,
       episode,
       seriesAdded: resolved.added,
       searchTriggered: true

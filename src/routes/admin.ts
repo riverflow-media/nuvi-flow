@@ -578,7 +578,8 @@ export function registerAdminRoutes(
       'autoRequestEnabled',
       'radarrEnabled',
       'sonarrEnabled',
-      'sonarrSeparateAnimeRoot'
+      'sonarrSeparateAnimeRoot',
+      'sonarrMonitorWholeSeries'
     ]) {
       if (body[key] === 'true' || body[key] === 'false') {
         settings.set(key, body[key]!);

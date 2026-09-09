@@ -73,6 +73,10 @@ export class SettingsService {
     return this.boolean('sonarrSeparateAnimeRoot', false);
   }
 
+  get sonarrMonitorWholeSeries(): boolean {
+    return this.boolean('sonarrMonitorWholeSeries', false);
+  }
+
   get sonarrAnimeRootFolderPath(): string {
     return this.get('sonarrAnimeRootFolderPath');
   }
@@ -125,6 +129,7 @@ export class SettingsService {
       sonarrConfigured: Boolean(this.sonarrApiKey),
       sonarrRootFolderPath: this.sonarrRootFolderPath,
       sonarrSeparateAnimeRoot: this.sonarrSeparateAnimeRoot,
+      sonarrMonitorWholeSeries: this.sonarrMonitorWholeSeries,
       sonarrAnimeRootFolderPath: this.sonarrAnimeRootFolderPath,
       sonarrQualityProfileId: this.sonarrQualityProfileId,
       sonarrAnimeQualityProfileId: this.sonarrAnimeQualityProfileId
