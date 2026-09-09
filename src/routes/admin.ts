@@ -7,6 +7,8 @@ import { createSessionToken, createStreamToken, hashPassword, verifyPassword, ve
 import { parseJson } from '../lib/json.js';
 import type { MediaFileRow, MediaItemRow, MediaType } from '../types.js';
 import type { MediaScanner } from '../services/scanner.js';
+import { RadarrClient } from '../services/radarr.js';
+import { SonarrClient } from '../services/sonarr.js';
 import type { SettingsService } from '../services/settings.js';
 import type { TmdbService } from '../services/tmdb.js';
 import type { MetadataSearchResult } from '../services/tmdb.js';
@@ -249,6 +251,133 @@ export function registerAdminRoutes(
     if (scanner.isRunning()) return reply.code(409).send({ error: 'A scan is already running' });
     void scanner.scan(mode).catch((error) => request.log.error({ error }, 'Manual scan failed'));
     return reply.code(202).send({ ok: true, mode });
+  });
+
+  app.post('/admin/api/integrations/:service/test', { preHandler: requireAdmin(config, true) }, async (request, reply) => {
+    const { service } = request.params as { service: string };
+
+    if (!['radarr', 'sonarr'].includes(service)) {
+      return reply.code(404).send({ error: 'Unknown integration' });
+    }
+
+    const body = request.body as {
+      url?: string;
+      apiKey?: string;
+    };
+
+    const url = (
+      body.url?.trim() ||
+      (service === 'radarr'
+        ? settings.radarrUrl
+        : settings.sonarrUrl)
+    ).replace(/\/+$/, '');
+
+    const apiKey =
+      body.apiKey?.trim() ||
+      (service === 'radarr'
+        ? settings.radarrApiKey
+        : settings.sonarrApiKey);
+
+    if (!url) {
+      return reply.code(400).send({
+        error: `${service === 'radarr' ? 'Radarr' : 'Sonarr'} URL is required`
+      });
+    }
+
+    let parsed: URL;
+
+    try {
+      parsed = new URL(url);
+    } catch {
+      return reply.code(400).send({
+        error: `${service === 'radarr' ? 'Radarr' : 'Sonarr'} URL must be valid`
+      });
+    }
+
+    if (!['http:', 'https:'].includes(parsed.protocol)) {
+      return reply.code(400).send({
+        error: `${service === 'radarr' ? 'Radarr' : 'Sonarr'} URL must use HTTP or HTTPS`
+      });
+    }
+
+    if (!apiKey) {
+      return reply.code(400).send({
+        error: `${service === 'radarr' ? 'Radarr' : 'Sonarr'} API key is required`
+      });
+    }
+
+    try {
+      if (service === 'radarr') {
+        const client = new RadarrClient(url, apiKey);
+
+        const [status, rootFolders, qualityProfiles] =
+          await Promise.all([
+            client.status(),
+            client.rootFolders(),
+            client.qualityProfiles()
+          ]);
+
+        return reply.send({
+          ok: true,
+          service: 'radarr',
+          instanceName: status.instanceName || 'Radarr',
+          version: status.version,
+          rootFolders: rootFolders.map((folder) => ({
+            id: folder.id,
+            path: folder.path,
+            accessible: folder.accessible,
+            freeSpace: folder.freeSpace
+          })),
+          qualityProfiles: qualityProfiles.map((profile) => ({
+            id: profile.id,
+            name: profile.name
+          }))
+        });
+      }
+
+      const client = new SonarrClient(url, apiKey);
+
+      const [status, rootFolders, qualityProfiles] =
+        await Promise.all([
+          client.status(),
+          client.rootFolders(),
+          client.qualityProfiles()
+        ]);
+
+      return reply.send({
+        ok: true,
+        service: 'sonarr',
+        instanceName: status.instanceName || 'Sonarr',
+        version: status.version,
+        rootFolders: rootFolders.map((folder) => ({
+          id: folder.id,
+          path: folder.path,
+          accessible: folder.accessible,
+          freeSpace: folder.freeSpace
+        })),
+        qualityProfiles: qualityProfiles.map((profile) => ({
+          id: profile.id,
+          name: profile.name
+        }))
+      });
+    } catch (error) {
+      const detail =
+        error instanceof Error
+          ? error.message
+          : 'Unknown connection error';
+
+      request.log.warn(
+        {
+          service,
+          error: detail
+        },
+        'Integration connection test failed'
+      );
+
+      return reply.code(502).send({
+        error: `${service === 'radarr' ? 'Radarr' : 'Sonarr'} connection failed: ${detail}`
+      });
+    }
   });
 
   app.put('/admin/api/settings', { preHandler: requireAdmin(config, true) }, async (request, reply) => {
