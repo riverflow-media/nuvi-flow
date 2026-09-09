@@ -49,8 +49,23 @@ function install(fetchMock: ReturnType<typeof vi.fn>): void {
   document.open();
   document.write(adminHtml('test-csrf').replace(/<script>[\s\S]*<\/script>/, ''));
   document.close();
-  vi.stubGlobal('fetch', fetchMock);
-  Object.defineProperty(window, 'fetch', { configurable: true, value: fetchMock });
+
+  const routedFetch = vi.fn(async (
+    input: string | URL | Request,
+    init?: RequestInit
+  ) => {
+    if (String(input) === '/admin/api/requests') {
+      return json({ requests: [] });
+    }
+
+    return fetchMock(input, init);
+  });
+
+  vi.stubGlobal('fetch', routedFetch);
+  Object.defineProperty(window, 'fetch', {
+    configurable: true,
+    value: routedFetch
+  });
   Object.defineProperty(window, 'confirm', { configurable: true, value: vi.fn(() => true) });
   Object.defineProperty(window, 'open', { configurable: true, value: vi.fn() });
   window.eval(adminJs);

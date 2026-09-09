@@ -4,7 +4,7 @@ module.exports = {
       unpack: '**/{better-sqlite3,ffprobe-static}/**/*'
     },
     executableName: 'PersonalMediaAddon',
-    name: 'Personal Media Addon',
+    name: 'Nuvi-Flow',
     ignore: [
       /^\/\.git(?:\/|$)/,
       /^\/\.github(?:\/|$)/,
@@ -23,7 +23,7 @@ module.exports = {
       name: '@electron-forge/maker-squirrel',
       config: {
         name: 'personal_media_addon',
-        authors: 'Personal Media Addon contributors',
+        authors: 'Personal Media Addon contributors and Nuvi-Flow contributors',
         description: 'Stream a personal movie and TV library through a private Stremio-compatible addon.'
       }
     },

@@ -1,124 +1,328 @@
-# Personal Media Addon
+# Nuvi-Flow
 
-Personal Media Addon turns folders of movies and TV shows into a private, searchable Stremio-compatible addon. It scans files in place, adds metadata automatically, and streams the original files with seek support. It is available as a Windows desktop app and a hardened Docker/CasaOS/ZimaOS service.
+**Nuvi-Flow** is a self-hosted personal media addon for **Nuvio and Stremio-compatible clients**.
 
-## What it does
+It scans your local movie, TV, and anime libraries, streams the original files directly, and can automatically request missing media through **Radarr** and **Sonarr** when you try to play something that is not already in your library.
 
-- Automatic metadata through TMDB when configured, with zero-configuration Cinemeta and local fallbacks
-- Movie, series, multi-episode, special, season-folder, `S01E01`, `1x01`, and documentary `E01` filename support
-- Posters, backgrounds, episode artwork, descriptions, cast, genres, and technical media details
-- Four searchable Stremio catalogs: movies, series, recently added movies, and recently added series
-- Direct streaming with HTTP byte ranges, `HEAD`, seeking, external subtitles, and signed URLs
-- Password-protected dashboard with scans, matching corrections, settings, health, and logs
-- SQLite persistence, incremental scans, file watching, bounded concurrency, and isolated scan errors
-- No transcoding and no media-file writes
+Nuvi-Flow is based on [Squipy411/personal-media-addon](https://github.com/Squipy411/personal-media-addon) and extends it with automatic media requests, anime-aware Sonarr support, symlink-friendly scanning, request tracking, and customizable branding.
 
-## Windows
+## Features
 
-Download the `.Setup.exe` file from the [latest GitHub release](https://github.com/Squipy411/personal-media-addon/releases/latest) and run it. On first launch:
+### Personal media streaming
 
-1. Choose the Movies folder.
-2. Choose the TV Shows folder.
-3. Set an admin password of at least 12 characters.
-4. Keep `http://127.0.0.1:60500` when your Stremio-compatible player runs on the same PC. For another device on your LAN, use the Windows PC's LAN address instead.
-5. Optionally enable start at login.
+- Movies and TV series from your own folders
+- Optional separate Anime library directory
+- Direct playback of original media files
+- HTTP byte-range support for seeking
+- External subtitle support
+- Signed media URLs
+- No transcoding
+- No media-file modifications
+- Searchable movie and series catalogs
+- Recently added catalogs
+- Posters, backdrops, episode artwork, descriptions, genres, cast, and technical metadata
+- TMDB metadata when configured
+- Automatic Cinemeta fallback
 
-The desktop app stores its database and encrypted settings under the current Windows user's application-data directory. Movie and TV files are opened for reading; they are not renamed, moved, deleted, or edited.
+### Symlink-friendly libraries
 
-The first public Windows installer is unsigned, so Windows SmartScreen may display an unrecognized-publisher warning. Code signing can be added to the release workflow once a Windows signing certificate is available.
+Nuvi-Flow supports media files exposed through symlinks, making it suitable for setups using rclone, InfiniDysk, or other virtual/remote media mounts.
 
-### Build the Windows installer
+Symlinked media files are followed and scanned while the configured media directories can remain read-only.
 
-Use Windows 10/11 with Node.js 22:
+### Automatic Radarr and Sonarr requests
 
-```powershell
-npm ci
-npm test
-npm run make:windows
-```
+When enabled, opening missing media in Nuvio can automatically send a request directly to Radarr or Sonarr.
 
-Installers and the portable ZIP are written under `out/make/`. Electron Forge rebuilds the native SQLite dependency for Electron during packaging.
+No Seerr or Jellyseerr intermediary is required.
 
-## Docker, CasaOS, and ZimaOS
+#### Movies
 
-Copy the example environment file and edit it:
+Missing movies are sent to Radarr using a configurable:
+
+- Radarr URL
+- API key
+- Root folder
+- Quality profile
+
+Nuvi-Flow can add the movie and trigger a Radarr search automatically.
+
+#### TV episodes
+
+Missing TV episodes are sent directly to Sonarr.
+
+Nuvi-Flow:
+
+- Supports IMDb identifiers
+- Supports TVDB identifiers
+- Lets Sonarr resolve its own TVDB metadata
+- Requests only the episode you attempted to play
+- Does not monitor or search the entire series
+- Does not modify existing Sonarr series settings
+
+If a new series must be added first, Nuvi-Flow waits briefly for Sonarr to populate its episode records before searching for the requested episode.
+
+### Anime support
+
+Anime can be configured independently from normal TV.
+
+Nuvi-Flow supports:
+
+- Optional separate Anime library directory
+- Optional separate Sonarr Anime root folder
+- Optional separate Sonarr Anime quality profile
+- Automatic detection using Sonarr's `seriesType`
+- Normal TV profile fallback when no Anime-specific profile is selected
+
+Existing Sonarr series are never moved or re-profiled.
+
+### Request queue
+
+The admin dashboard includes a request queue for missing media sent to Radarr and Sonarr.
+
+Statuses include:
+
+- Pending
+- Requested
+- Searching
+- Failed
+- Added
+
+**Added** means Nuvi-Flow has actually detected and matched the downloaded/imported media in the local library. It does not simply mean Radarr or Sonarr accepted the request.
+
+Once media appears in the library:
+
+1. The request changes to **Added**
+2. It remains visible for about five minutes
+3. The completed request is removed from the queue
+4. Nuvi-Flow runs a follow-up changed-library scan
+
+Failed requests remain visible and can be retried manually.
+
+### Custom branding
+
+Nuvi-Flow can be branded directly from the admin dashboard.
+
+You can:
+
+- Change the visible addon name
+- Upload a custom PNG, JPG, or WEBP icon
+- Replace the icon at any time
+- Remove the custom icon to restore the default Nuvi-Flow icon
+
+The same icon is used by:
+
+- Nuvio/Stremio through the addon manifest
+- The Nuvi-Flow admin interface
+
+Uploaded branding is stored in the persistent `/app/data` volume.
+
+## Admin dashboard
+
+The password-protected dashboard provides:
+
+- Library overview
+- Recently added media
+- Files needing review
+- Manual metadata matching
+- Scan history
+- Changed-library scans
+- Full rescans
+- Automatic request history
+- Failed-request retries
+- Radarr connection testing
+- Sonarr connection testing
+- Root-folder selection
+- Quality-profile selection
+- Anime-specific Sonarr settings
+- Runtime configuration
+- Custom addon name
+- Custom addon icon
+
+Saved Radarr and Sonarr API keys are never returned to the browser.
+
+## Docker
+
+### Build locally
 
 ```bash
+git clone https://github.com/riverflow-media/nuvi-flow.git
+cd nuvi-flow
 cp .env.example .env
 ```
 
-Set absolute paths for `MOVIES_PATH` and `TV_PATH`, then create three unique values for `ADMIN_PASSWORD`, `SESSION_SECRET`, and `STREAM_SECRET`. The two secrets must each contain at least 32 random characters.
-
-Start the service:
+Edit `.env`, then start Nuvi-Flow:
 
 ```bash
 docker compose up -d --build
 docker compose ps
 ```
 
-Open:
+Default endpoints:
 
-- Dashboard: `http://localhost:60500/admin`
+- Admin: `http://localhost:60500/admin`
 - Health: `http://localhost:60500/health`
-- Addon manifest: `http://localhost:60500/manifest.json`
+- Manifest: `http://localhost:60500/manifest.json`
+- Addon icon: `http://localhost:60500/addon-icon`
 
-The Compose definition enforces these storage boundaries:
+### Persistent storage
 
-| Container path | Access | Purpose |
-| --- | --- | --- |
-| `/media/movies` | Read-only | Movie files |
-| `/media/tv` | Read-only | TV files |
-| `/app/data` | Writable | Database and app settings only |
+`/app/data` contains:
 
-The container also uses a read-only root filesystem, a non-root account, `no-new-privileges`, and a temporary in-memory `/tmp`.
+- SQLite database
+- Saved settings
+- Uploaded addon icon
 
-The public container is available at `ghcr.io/squipy411/personal-media-addon`. Set `IMAGE_NAME=ghcr.io/squipy411/personal-media-addon:latest` in `.env` and run `docker compose pull && docker compose up -d`. Remove the `build:` block if you want pull-only deployments. To pin this release, use `ghcr.io/squipy411/personal-media-addon:1.1.1`.
+Do not delete this volume during normal upgrades if you want to preserve your configuration.
 
-### Docker Desktop on Windows
+### Media mounts
 
-Docker Desktop can run the container directly on Windows 11, so installing the desktop `.exe` is optional. Internal, USB, and external HDD/SSD folders can be bind-mounted into the container as long as the drive is available to Docker Desktop.
+The container only needs read access to your media.
 
-Use forward-slash Windows paths in `.env`:
+Typical paths:
 
-```dotenv
-MOVIES_PATH=E:/Media/Movies
-TV_PATH="E:/Media/TV Shows"
-BASE_URL=http://YOUR-WINDOWS-PC-LAN-IP:60500
+```text
+/mnt/media/movies
+/mnt/media/tv
+/mnt/media/anime
 ```
 
-Run `docker compose up -d`, then open `http://localhost:60500/admin`. The included Compose definition appends `:ro` to both media mounts, so the container can read the selected folders but cannot write to them. Only the `personal-media-data` volume is writable. If Docker reports that a drive cannot be shared, allow that drive or folder in Docker Desktop settings and retry.
+Anime is optional.
 
-## Add it to Stremio or Nuvio
+## GitHub Container Registry
 
-1. Confirm the health endpoint reports `"status":"ok"`.
-2. In the player's addon area, choose installation by manifest URL.
-3. Enter `http://YOUR-SERVER:60500/manifest.json`.
-4. Open Personal Movies or Personal Series.
+Nuvi-Flow images will be published as:
 
-Do not expose the service directly to the public internet without an authenticated network layer. Signed stream links protect media URLs, but the addon catalog itself is designed primarily for a trusted home network.
+```text
+ghcr.io/riverflow-media/nuvi-flow
+```
+
+Example:
+
+```bash
+docker pull ghcr.io/riverflow-media/nuvi-flow:latest
+```
+
+## Add Nuvi-Flow to Nuvio
+
+Make sure the health endpoint returns `"status":"ok"`.
+
+Then install the addon using:
+
+```text
+https://YOUR-NUVI-FLOW-DOMAIN/manifest.json
+```
+
+The Nuvi-Flow manifest ID is:
+
+```text
+community.nuviflow
+```
+
+If you previously installed Personal Media Addon or an earlier build using the old manifest ID, remove the old addon and install the Nuvi-Flow manifest again.
+
+## Automatic request setup
+
+Open the Nuvi-Flow admin dashboard and go to:
+
+**Settings → Automatic Requests**
+
+Set **Missing media behavior** to:
+
+```text
+Automatically request missing media
+```
+
+### Radarr
+
+Configure:
+
+- Enable Radarr
+- Radarr URL
+- Radarr API key
+- Movie root folder
+- Movie quality profile
+
+Use **Test Connection** to verify access.
+
+### Sonarr
+
+Configure:
+
+- Enable Sonarr
+- Sonarr URL
+- Sonarr API key
+- TV root folder
+- TV quality profile
+
+Optional Anime settings:
+
+- Separate Anime root folder
+- Anime root folder
+- Anime quality profile
+
+The dashboard automatically loads the real Radarr/Sonarr root-folder and quality-profile names from the saved connection.
+
+## How missing media works
+
+When Nuvio asks Nuvi-Flow for a stream:
+
+```text
+Media exists locally
+        ↓
+Return local stream
+```
+
+When it is missing:
+
+```text
+Missing stream
+        ↓
+Nuvi-Flow creates/deduplicates a request
+        ↓
+Radarr or Sonarr
+        ↓
+Download/import
+        ↓
+Nuvi-Flow detects the new file or symlink
+        ↓
+Request becomes Added
+        ↓
+Visible for about 5 minutes
+        ↓
+Completed queue entry clears
+```
+
+A successful Radarr/Sonarr API request alone does **not** mark the media as Added.
 
 ## Configuration
 
-| Variable | Default | Purpose |
-| --- | --- | --- |
-| `PORT` | `60500` | Published host port |
-| `BASE_URL` | `http://localhost:60500` | URL embedded in stream and subtitle links |
-| `TMDB_API_KEY` | empty | Optional TMDB v3 key or v4 read token |
-| `ADMIN_USERNAME` | `admin` | Initial dashboard username |
-| `ADMIN_PASSWORD` | required | Initial dashboard password |
-| `SESSION_SECRET` | required | Dashboard-session signing secret |
-| `STREAM_SECRET` | required | Independent media-link signing secret |
-| `MOVIES_PATH` | required | Absolute host Movies folder |
-| `TV_PATH` | required | Absolute host TV Shows folder |
-| `SCAN_INTERVAL_MINUTES` | `30` | Scheduled scan frequency |
-| `MINIMUM_FILE_SIZE_MB` | `50` | Ignore smaller files |
-| `SCAN_CONCURRENCY` | `2` | Concurrent metadata/inspection work |
-| `WATCH_MEDIA` | `true` | Watch library folders for changes |
-| `SCAN_ON_STARTUP` | `true` | Scan after startup |
+Common environment variables include:
 
-Changing `ADMIN_PASSWORD` in `.env` does not replace the password already stored in an existing database. Change it in the dashboard or recreate only the app-data volume.
+| Variable | Purpose |
+| --- | --- |
+| `PORT` | HTTP port, default `60500` |
+| `BASE_URL` | Public URL used in manifest and stream links |
+| `ADDON_NAME` | Default addon name |
+| `TMDB_API_KEY` | Optional TMDB API credential |
+| `ADMIN_USERNAME` | Initial admin username |
+| `ADMIN_PASSWORD` | Initial admin password |
+| `SESSION_SECRET` | Admin-session signing secret |
+| `STREAM_SECRET` | Media-link signing secret |
+| `MOVIES_PATH` | Movie library directory |
+| `TV_PATH` | TV library directory |
+| `ANIME_PATH` | Optional separate Anime library directory |
+| `SCAN_INTERVAL_MINUTES` | Scheduled scan frequency |
+| `MINIMUM_FILE_SIZE_MB` | Ignore files smaller than this |
+| `SCAN_CONCURRENCY` | Concurrent scan work |
+| `WATCH_MEDIA` | Watch media directories for changes |
+| `SCAN_ON_STARTUP` | Scan after startup |
+
+Radarr, Sonarr, Anime root/profile selections, addon branding, and other runtime settings can be managed from the admin dashboard.
 
 ## Development
+
+Requires Node.js 22 or newer.
 
 ```bash
 npm ci
@@ -128,11 +332,62 @@ npm run build
 npm start
 ```
 
-The server requires Node.js 22 or newer. Tests cover the admin API and UI, HTTP range behavior, security, filename parsing, metadata fallbacks, and Stremio builders.
+Build a local Docker image:
 
-## Privacy and metadata
+```bash
+docker build \
+  --build-arg VERSION=dev \
+  --build-arg REVISION="$(git rev-parse HEAD)" \
+  --build-arg SOURCE_URL=https://github.com/riverflow-media/nuvi-flow \
+  -t nuvi-flow:local \
+  .
+```
 
-Library titles are sent to the configured metadata provider during matching. With no TMDB credential, the app queries Cinemeta automatically. Media bytes stay on your server and are streamed directly to your player.
+## Windows
+
+The project retains the upstream Electron-based Windows desktop build.
+
+Build it on Windows with Node.js 22:
+
+```powershell
+npm ci
+npm test
+npm run typecheck
+npm run make:windows
+```
+
+Artifacts are written beneath:
+
+```text
+out/make/
+```
+
+## Security
+
+Nuvi-Flow is intended primarily for private/self-hosted use.
+
+The admin dashboard requires authentication, media URLs are signed, and integration API keys are stored server-side.
+
+If exposing Nuvi-Flow to the internet, place it behind a properly configured reverse proxy and restrict admin access appropriately.
+
+## Privacy
+
+Media remains on your server and is streamed directly to the player.
+
+Library titles may be sent to the configured metadata provider while matching media.
+
+## Fork and attribution
+
+Nuvi-Flow is a modified fork of:
+
+**Personal Media Addon**
+https://github.com/Squipy411/personal-media-addon
+
+The original Personal Media Addon copyright and MIT license notice are preserved in this repository. Nuvi-Flow-specific modifications are maintained separately in this fork.
+
+Nuvi-Flow adds functionality focused on Nuvio integration, automatic Radarr/Sonarr requests, Anime handling, symlinked libraries, request lifecycle tracking, and customizable branding.
+
+See [FORK_NOTICE.md](FORK_NOTICE.md) for additional attribution information.
 
 ## License
 

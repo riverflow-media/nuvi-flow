@@ -123,7 +123,7 @@ function openDashboard(preferences = readPreferences()) {
     height: 820,
     minWidth: 900,
     minHeight: 650,
-    title: 'Personal Media Addon',
+    title: 'Nuvi-Flow',
     webPreferences: { contextIsolation: true, nodeIntegration: false, sandbox: true }
   });
   secureWindow(mainWindow, localOrigin);
@@ -141,7 +141,7 @@ function openSetup() {
     width: 760,
     height: 760,
     resizable: false,
-    title: 'Set up Personal Media Addon',
+    title: 'Set up Nuvi-Flow',
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
       contextIsolation: true,
@@ -229,7 +229,7 @@ app.whenReady().then(async () => {
     await startServer(preferences);
     openDashboard(preferences);
   } catch (error) {
-    dialog.showErrorBox('Personal Media Addon could not start', error instanceof Error ? error.message : String(error));
+    dialog.showErrorBox('Nuvi-Flow could not start', error instanceof Error ? error.message : String(error));
     openSetup();
   }
 });

@@ -25,7 +25,7 @@ jobs:
       - name: Upload workflow artifact
         uses: actions/upload-artifact@v6
         with:
-          name: personal-media-addon-windows
+          name: nuvi-flow-windows
           path: out/make/**/*
           if-no-files-found: error
       - name: Publish files to GitHub Release
@@ -35,4 +35,4 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           $assets = Get-ChildItem out/make -Recurse -File | ForEach-Object { $_.FullName }
-          gh release create $env:GITHUB_REF_NAME $assets --generate-notes --title "Personal Media Addon $env:GITHUB_REF_NAME"
+          gh release create $env:GITHUB_REF_NAME $assets --generate-notes --title "Nuvi-Flow $env:GITHUB_REF_NAME"

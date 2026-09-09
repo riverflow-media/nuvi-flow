@@ -80,12 +80,12 @@ x-casaos:
   scheme: http
   icon: https://cdn.jsdelivr.net/gh/walkxcode/dashboard-icons/png/stremio.png
   title:
-    en_US: Personal Media Addon
+    en_US: Nuvi-Flow
   tagline:
     en_US: Stream your own movie and TV library.
   description:
     en_US: A private Stremio-compatible server with automatic metadata and read-only media mounts.
-  author: Personal Media Addon contributors
+  author: Personal Media Addon contributors and Nuvi-Flow contributors
   category: Media
   architectures:
     - amd64

@@ -17,8 +17,8 @@ describe('desktop ffprobe path resolution', () => {
   });
 
   it('maps packaged binaries from app.asar to app.asar.unpacked', () => {
-    expect(resolveFfprobePath({ path: 'C:\\Program Files\\Personal Media Addon\\resources\\app.asar\\node_modules\\ffprobe-static\\bin\\win32\\x64\\ffprobe.exe' }, true))
-      .toBe('C:\\Program Files\\Personal Media Addon\\resources\\app.asar.unpacked\\node_modules\\ffprobe-static\\bin\\win32\\x64\\ffprobe.exe');
+    expect(resolveFfprobePath({ path: 'C:\\Program Files\\Nuvi-Flow\\resources\\app.asar\\node_modules\\ffprobe-static\\bin\\win32\\x64\\ffprobe.exe' }, true))
+      .toBe('C:\\Program Files\\Nuvi-Flow\\resources\\app.asar.unpacked\\node_modules\\ffprobe-static\\bin\\win32\\x64\\ffprobe.exe');
   });
 
   it('fails with a useful message when no executable path is exported', () => {

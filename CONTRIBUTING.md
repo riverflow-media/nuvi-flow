@@ -1,6 +1,6 @@
 # Contributing
 
-Thank you for helping improve Personal Media Addon.
+Thank you for helping improve Nuvi-Flow.
 
 1. Create a focused branch.
 2. Run `npm ci`, `npm test`, `npm run typecheck`, and `npm run build`.
