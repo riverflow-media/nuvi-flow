@@ -22,6 +22,16 @@ export interface AppConfig {
   ffprobePath: string;
   watch: boolean;
   scanOnStartup: boolean;
+
+  autoRequestEnabled: boolean;
+
+  radarrEnabled: boolean;
+  radarrUrl: string;
+  radarrApiKey: string;
+
+  sonarrEnabled: boolean;
+  sonarrUrl: string;
+  sonarrApiKey: string;
 }
 
 function numberValue(value: string | undefined, fallback: number, minimum = 0): number {
@@ -61,7 +71,17 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     logLevel: env.LOG_LEVEL || 'info',
     ffprobePath: env.FFPROBE_PATH || 'ffprobe',
     watch: booleanValue(env.WATCH_MEDIA, true),
-    scanOnStartup: booleanValue(env.SCAN_ON_STARTUP, true)
+    scanOnStartup: booleanValue(env.SCAN_ON_STARTUP, true),
+
+    autoRequestEnabled: booleanValue(env.AUTO_REQUEST_ENABLED, false),
+
+    radarrEnabled: booleanValue(env.RADARR_ENABLED, false),
+    radarrUrl: cleanBaseUrl(env.RADARR_URL || ''),
+    radarrApiKey: env.RADARR_API_KEY?.trim() || '',
+
+    sonarrEnabled: booleanValue(env.SONARR_ENABLED, false),
+    sonarrUrl: cleanBaseUrl(env.SONARR_URL || ''),
+    sonarrApiKey: env.SONARR_API_KEY?.trim() || ''
   };
 }
 
