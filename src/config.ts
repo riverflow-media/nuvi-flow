@@ -4,6 +4,7 @@ export interface AppConfig {
   port: number;
   host: string;
   baseUrl: string;
+  addonName: string;
   tmdbApiKey: string;
   adminUsername: string;
   adminPassword: string;
@@ -55,6 +56,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     port: numberValue(env.PORT, 60500, 1),
     host: env.HOST || '0.0.0.0',
     baseUrl: cleanBaseUrl(env.BASE_URL || `http://localhost:${env.PORT || 60500}`),
+    addonName: env.ADDON_NAME?.trim() || 'Zima Personal Media',
     tmdbApiKey: env.TMDB_API_KEY?.trim() || '',
     adminUsername: env.ADMIN_USERNAME?.trim() || 'admin',
     adminPassword: env.ADMIN_PASSWORD || 'change-me',

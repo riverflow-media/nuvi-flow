@@ -448,6 +448,20 @@ export function registerAdminRoutes(
     try { baseUrl = new URL(body.baseUrl || ''); } catch { return reply.code(400).send({ error: 'BASE_URL must be a valid URL' }); }
     if (!['http:', 'https:'].includes(baseUrl.protocol)) return reply.code(400).send({ error: 'BASE_URL must use HTTP or HTTPS' });
 
+    const addonName = body.addonName?.trim();
+
+    if (!addonName) {
+      return reply.code(400).send({
+        error: 'Addon name is required'
+      });
+    }
+
+    if (addonName.length > 80) {
+      return reply.code(400).send({
+        error: 'Addon name must be 80 characters or fewer'
+      });
+    }
+
     const numeric: Array<[string, number]> = [
       ['scanIntervalMinutes', 1],
       ['minimumFileSizeMb', 0],
@@ -462,6 +476,7 @@ export function registerAdminRoutes(
 
     for (const key of [
       'baseUrl',
+      'addonName',
       'moviesPath',
       'tvPath',
       'scanIntervalMinutes',

@@ -55,7 +55,12 @@ export function registerStremioRoutes(
   requester: RequestService
 ): void {
   app.get('/manifest.json', { config: { rateLimit: { max: 300, timeWindow: '1 minute' } } }, async (_request, reply) => {
-    reply.header('Cache-Control', 'public, max-age=300').send(manifest);
+    reply
+      .header('Cache-Control', 'no-store')
+      .send({
+        ...manifest,
+        name: settings.addonName
+      });
   });
 
   const catalogHandler = async (request: any, reply: any) => {
