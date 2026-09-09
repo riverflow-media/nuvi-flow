@@ -489,12 +489,54 @@ export class SonarrClient {
       );
     }
 
-    const episode =
-      await this.findEpisode(
-        resolved.series.id,
-        seasonNumber,
-        episodeNumber
-      );
+    let episode: SonarrEpisode | undefined;
+    let lastEpisodeError: unknown;
+
+    /*
+     * Sonarr can return a newly added series before its episode
+     * records have finished populating. Retry briefly before
+     * treating the requested episode as genuinely missing.
+     */
+    const attempts =
+      resolved.added ? 6 : 1;
+
+    for (
+      let attempt = 0;
+      attempt < attempts;
+      attempt += 1
+    ) {
+      try {
+        episode =
+          await this.findEpisode(
+            resolved.series.id,
+            seasonNumber,
+            episodeNumber
+          );
+
+        break;
+      } catch (error) {
+        lastEpisodeError = error;
+
+        if (
+          attempt + 1 >= attempts
+        ) {
+          break;
+        }
+
+        await new Promise<void>(
+          resolve =>
+            setTimeout(resolve, 1_000)
+        );
+      }
+    }
+
+    if (!episode) {
+      throw lastEpisodeError instanceof Error
+        ? lastEpisodeError
+        : new Error(
+            `Sonarr could not find S${seasonNumber}E${episodeNumber}.`
+          );
+    }
 
     if (episode.hasFile) {
       return {
