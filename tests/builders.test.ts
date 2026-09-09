@@ -26,6 +26,6 @@ describe('Stremio output builders', () => {
   });
 
   it('describes direct-play stream quality', () => {
-    expect(streamTitle({ quality: '1080P', height: 1080, video_codec: 'hevc', audio_channels: 6 } as MediaFileRow)).toBe('Local File — 1080P HEVC — 5.1 Audio');
+    expect(streamTitle({ quality: '1080P', height: 1080, video_codec: 'hevc', audio_channels: 6 } as MediaFileRow)).toBe('1080p • HEVC • 5.1');
   });
 });

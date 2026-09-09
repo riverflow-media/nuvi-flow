@@ -3,7 +3,13 @@ import type { FastifyInstance } from 'fastify';
 import type { AppDatabase } from '../db/index.js';
 import { parseJson } from '../lib/json.js';
 import { createStreamToken } from '../lib/security.js';
-import { catalogPreview, fullMeta, streamTitle } from '../stremio/builders.js';
+import {
+  catalogPreview,
+  fullMeta,
+  streamDescription,
+  streamName,
+  streamTitle
+} from '../stremio/builders.js';
 import type { ExternalSubtitleRow, MediaFileRow, MediaItemRow, MediaType } from '../types.js';
 import type { SettingsService } from '../services/settings.js';
 import type { RequestService } from '../services/requester.js';
@@ -130,7 +136,9 @@ export function registerStremioRoutes(
         .run(payload.jti, file.id, payload.exp, Date.now());
       const subtitles = database.sqlite.prepare('SELECT * FROM external_subtitles WHERE media_file_id=? ORDER BY language').all(file.id) as ExternalSubtitleRow[];
       return {
+        name: streamName(file),
         title: streamTitle(file),
+        description: streamDescription(file),
         url: `${settings.baseUrl}/media/${encodeURIComponent(token)}`,
         subtitles: subtitles.map((subtitle) => ({
           id: subtitle.id,
@@ -141,8 +149,7 @@ export function registerStremioRoutes(
           bingeGroup: `nuvi-flow:${file.media_item_id}`,
           filename: path.basename(file.relative_path),
           videoSize: file.size
-        },
-        description: file.compatibility_warning || undefined
+        }
       };
     });
     reply.header('Cache-Control', 'no-store').send({ streams });

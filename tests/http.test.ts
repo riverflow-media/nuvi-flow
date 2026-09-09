@@ -59,7 +59,7 @@ describe('Stremio and media HTTP endpoints', () => {
   it('returns a signed direct stream URL', async () => {
     const response = await built.app.inject({ method: 'GET', url: '/stream/movie/tt1234567.json' });
     expect(response.statusCode).toBe(200);
-    expect(response.json().streams[0]).toMatchObject({ title: 'Local File — 1080P H.264 — 5.1 Audio' });
+    expect(response.json().streams[0]).toMatchObject({ title: '1080p • H.264 • AAC 5.1' });
     expect(response.json().streams[0].url).toMatch(/^https:\/\/media\.example\.test\/media\//);
   });
 

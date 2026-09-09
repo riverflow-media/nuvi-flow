@@ -82,9 +82,283 @@ export function audioLabel(file: Pick<MediaFileRow, 'audio_channels'>): string {
   return `${file.audio_channels}-channel Audio`;
 }
 
-export function streamTitle(file: Pick<MediaFileRow, 'quality' | 'height' | 'video_codec' | 'audio_channels'>): string {
-  const codec = file.video_codec ? file.video_codec.toUpperCase().replace('H264', 'H.264').replace('HEVC', 'HEVC') : 'Original';
-  return `Local File — ${qualityLabel(file)} ${codec} — ${audioLabel(file)}`;
+function streamResolution(
+  file: Pick<MediaFileRow, 'quality' | 'height'>
+): string {
+  if (file.height) {
+    if (file.height >= 2160) return '4K';
+    if (file.height >= 1440) return '1440p';
+    if (file.height >= 1080) return '1080p';
+    if (file.height >= 720) return '720p';
+    if (file.height >= 480) return '480p';
+    return `${file.height}p`;
+  }
+
+  const quality =
+    file.quality?.toUpperCase() || '';
+
+  if (
+    quality.includes('2160') ||
+    quality.includes('4K')
+  ) {
+    return '4K';
+  }
+
+  for (const resolution of [
+    '1440',
+    '1080',
+    '720',
+    '480'
+  ]) {
+    if (quality.includes(resolution)) {
+      return `${resolution}p`;
+    }
+  }
+
+  return file.quality
+    ? file.quality.toUpperCase()
+    : 'Original';
+}
+
+function videoCodecLabel(
+  value: string | null
+): string | null {
+  if (!value) return null;
+
+  const normalized =
+    value.toLowerCase()
+      .replace(/[^a-z0-9]/g, '');
+
+  if (
+    normalized === 'h264' ||
+    normalized === 'avc' ||
+    normalized === 'avc1'
+  ) {
+    return 'H.264';
+  }
+
+  if (
+    normalized === 'h265' ||
+    normalized === 'hevc'
+  ) {
+    return 'HEVC';
+  }
+
+  if (normalized === 'av1') {
+    return 'AV1';
+  }
+
+  if (normalized === 'vp9') {
+    return 'VP9';
+  }
+
+  return value.toUpperCase();
+}
+
+function audioCodecLabel(
+  value: string | null
+): string | null {
+  if (!value) return null;
+
+  const normalized =
+    value.toLowerCase()
+      .replace(/[^a-z0-9]/g, '');
+
+  if (normalized === 'truehd') {
+    return 'TrueHD';
+  }
+
+  if (
+    normalized === 'eac3' ||
+    normalized === 'eac3joc'
+  ) {
+    return 'EAC3';
+  }
+
+  if (normalized === 'ac3') {
+    return 'AC3';
+  }
+
+  if (
+    normalized === 'dtshdma' ||
+    normalized === 'dtshd'
+  ) {
+    return 'DTS-HD MA';
+  }
+
+  if (normalized === 'dts') {
+    return 'DTS';
+  }
+
+  if (normalized === 'aac') {
+    return 'AAC';
+  }
+
+  if (normalized === 'flac') {
+    return 'FLAC';
+  }
+
+  if (normalized === 'opus') {
+    return 'Opus';
+  }
+
+  return value.toUpperCase();
+}
+
+function channelLabel(
+  channels: number | null
+): string | null {
+  if (!channels) return null;
+  if (channels >= 8) return '7.1';
+  if (channels >= 6) return '5.1';
+  if (channels === 2) return 'Stereo';
+
+  return `${channels}ch`;
+}
+
+function streamSourceLabel(
+  source: string | null
+): string | null {
+  if (!source) return null;
+
+  const normalized =
+    source.toLowerCase()
+      .replace(/[^a-z0-9]/g, '');
+
+  if (normalized.includes('remux')) {
+    return 'REMUX';
+  }
+
+  if (normalized.includes('webdl')) {
+    return 'WEB-DL';
+  }
+
+  if (normalized.includes('webrip')) {
+    return 'WEBRip';
+  }
+
+  if (
+    normalized.includes('bluray') ||
+    normalized.includes('bdrip')
+  ) {
+    return 'BluRay';
+  }
+
+  if (normalized.includes('hdtv')) {
+    return 'HDTV';
+  }
+
+  if (normalized.includes('dvd')) {
+    return 'DVD';
+  }
+
+  return source;
+}
+
+function streamAudioLabel(
+  file: Pick<
+    MediaFileRow,
+    'audio_codec' | 'audio_channels'
+  >
+): string | null {
+  const codec =
+    audioCodecLabel(file.audio_codec);
+
+  const channels =
+    channelLabel(file.audio_channels);
+
+  return [codec, channels]
+    .filter(Boolean)
+    .join(' ') || null;
+}
+
+export function streamName(
+  file: Pick<
+    MediaFileRow,
+    | 'quality'
+    | 'height'
+    | 'source'
+    | 'video_codec'
+  >
+): string {
+  const resolution =
+    streamResolution(file);
+
+  const source =
+    streamSourceLabel(file.source);
+
+  const codec =
+    videoCodecLabel(file.video_codec);
+
+  return [
+    resolution,
+    source || codec
+  ]
+    .filter(Boolean)
+    .join(' • ');
+}
+
+export function streamTitle(
+  file: Pick<
+    MediaFileRow,
+    | 'quality'
+    | 'height'
+    | 'source'
+    | 'video_codec'
+    | 'audio_codec'
+    | 'audio_channels'
+  >
+): string {
+  return [
+    streamResolution(file),
+    streamSourceLabel(file.source),
+    videoCodecLabel(file.video_codec),
+    streamAudioLabel(file)
+  ]
+    .filter(Boolean)
+    .join(' • ');
+}
+
+export function streamDescription(
+  file: Pick<
+    MediaFileRow,
+    | 'video_codec'
+    | 'audio_codec'
+    | 'audio_channels'
+    | 'compatibility_warning'
+  >
+): string {
+  const parts: string[] = [];
+
+  const video =
+    videoCodecLabel(file.video_codec);
+
+  const audio =
+    streamAudioLabel(file);
+
+  if (video) parts.push(video);
+  if (audio) parts.push(audio);
+
+  if (file.compatibility_warning) {
+    const warning =
+      file.compatibility_warning.toLowerCase();
+
+    if (warning.includes('truehd')) {
+      parts.push(
+        '⚠ TrueHD direct-play may vary'
+      );
+    } else if (warning.includes('eac3')) {
+      parts.push(
+        '⚠ EAC3 direct-play may vary'
+      );
+    } else {
+      parts.push(
+        '⚠ Direct-play compatibility may vary'
+      );
+    }
+  }
+
+  return parts.join(' • ');
 }
 
 function withoutUndefined<T extends Record<string, unknown>>(value: T): T {
