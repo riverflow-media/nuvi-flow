@@ -2,9 +2,9 @@
 
 **Nuvi-Flow** is a self-hosted personal media addon for **Nuvio and Stremio-compatible clients**.
 
-It scans your local movie, TV, and anime libraries, streams the original files directly, and can automatically request missing media through **Radarr** and **Sonarr** when you try to play something that is not already in your library.
+It scans your local movie, TV, and anime libraries, streams the original files directly, presents useful playback metadata in Nuvio, and can automatically request missing media through **Radarr** and **Sonarr** when you try to play something that is not already in your library.
 
-Nuvi-Flow is based on [Squipy411/personal-media-addon](https://github.com/Squipy411/personal-media-addon) and extends it with automatic media requests, anime-aware Sonarr support, symlink-friendly scanning, request tracking, and customizable branding.
+Nuvi-Flow is based on [Squipy411/personal-media-addon](https://github.com/Squipy411/personal-media-addon) and extends it with automatic media requests, flexible Sonarr monitoring, anime-aware Sonarr support, richer Nuvio stream metadata, symlink-friendly scanning, request tracking, and customizable branding.
 
 ## Features
 
@@ -13,6 +13,8 @@ Nuvi-Flow is based on [Squipy411/personal-media-addon](https://github.com/Squipy
 - Movies and TV series from your own folders
 - Optional separate Anime library directory
 - Direct playback of original media files
+- Nuvio-friendly stream names and technical metadata
+- Resolution, source, video codec, audio codec, and channel information when available
 - HTTP byte-range support for seeking
 - External subtitle support
 - Signed media URLs
@@ -56,11 +58,18 @@ Nuvi-Flow:
 - Supports IMDb identifiers
 - Supports TVDB identifiers
 - Lets Sonarr resolve its own TVDB metadata
-- Requests only the episode you attempted to play
-- Does not monitor or search the entire series
-- Does not modify existing Sonarr series settings
+- Searches only the episode you attempted to play
+- Can monitor only the requested episode or the entire series
+- Can enable whole-series monitoring for series already present in Sonarr
+- Can automatically monitor future seasons when whole-series monitoring is enabled
+- Does not trigger an automatic search of the entire backlog
+- Does not move or re-profile existing Sonarr series
 
 If a new series must be added first, Nuvi-Flow waits briefly for Sonarr to populate its episode records before searching for the requested episode.
+
+With **Requested episode only**, Nuvi-Flow monitors only the episode you requested.
+
+With **Monitor entire series**, regular seasons and episodes are monitored in Sonarr, including future additions, while Nuvi-Flow still triggers an immediate search only for the episode requested in Nuvio. Specials keep their existing Sonarr monitoring state.
 
 ### Anime support
 
@@ -134,6 +143,7 @@ The password-protected dashboard provides:
 - Sonarr connection testing
 - Root-folder selection
 - Quality-profile selection
+- Requested-episode or whole-series Sonarr monitoring
 - Anime-specific Sonarr settings
 - Runtime configuration
 - Custom addon name
@@ -254,6 +264,11 @@ Configure:
 - Sonarr API key
 - TV root folder
 - TV quality profile
+- Series monitoring mode:
+  - **Requested episode only**
+  - **Monitor entire series**
+
+Whole-series monitoring does not automatically search or download the entire backlog. Nuvi-Flow still starts an immediate Sonarr search only for the episode requested in Nuvio.
 
 Optional Anime settings:
 
@@ -385,7 +400,7 @@ https://github.com/Squipy411/personal-media-addon
 
 The original Personal Media Addon copyright and MIT license notice are preserved in this repository. Nuvi-Flow-specific modifications are maintained separately in this fork.
 
-Nuvi-Flow adds functionality focused on Nuvio integration, automatic Radarr/Sonarr requests, Anime handling, symlinked libraries, request lifecycle tracking, and customizable branding.
+Nuvi-Flow adds functionality focused on Nuvio integration, richer stream metadata, automatic Radarr/Sonarr requests, flexible Sonarr series monitoring, Anime handling, symlinked libraries, request lifecycle tracking, and customizable branding.
 
 See [FORK_NOTICE.md](FORK_NOTICE.md) for additional attribution information.
 
