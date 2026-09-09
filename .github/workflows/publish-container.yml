@@ -2,7 +2,7 @@ name: Publish container
 
 on:
   push:
-    branches: [main]
+    branches: [riverflow-v1.1.1]
     tags: ['v*']
   workflow_dispatch:
 
