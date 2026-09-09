@@ -521,8 +521,9 @@ export function registerAdminRoutes(
       settings.set(key, value);
     }
 
-    // Root folders are paths returned by Radarr/Sonarr and may be cleared.
+    // Optional library/root paths may be cleared.
     for (const key of [
+      'animePath',
       'radarrRootFolderPath',
       'sonarrRootFolderPath',
       'sonarrAnimeRootFolderPath'
@@ -535,7 +536,8 @@ export function registerAdminRoutes(
     // Profile ID 0 means "not selected yet".
     for (const key of [
       'radarrQualityProfileId',
-      'sonarrQualityProfileId'
+      'sonarrQualityProfileId',
+      'sonarrAnimeQualityProfileId'
     ]) {
       if (typeof body[key] !== 'string') continue;
 

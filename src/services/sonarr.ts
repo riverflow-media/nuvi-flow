@@ -64,6 +64,7 @@ export interface AddSonarrSeriesOptions {
   animeRootFolderPath?: string;
 
   qualityProfileId: number;
+  animeQualityProfileId?: number;
 }
 
 export interface SonarrSeriesIdentifiers {
@@ -226,6 +227,21 @@ export class SonarrClient {
     return options.rootFolderPath;
   }
 
+  private qualityProfileFor(
+    series: SonarrSeries,
+    options: AddSonarrSeriesOptions
+  ): number {
+    if (
+      series.seriesType === 'anime' &&
+      options.animeQualityProfileId &&
+      options.animeQualityProfileId > 0
+    ) {
+      return options.animeQualityProfileId;
+    }
+
+    return options.qualityProfileId;
+  }
+
   async addSeries(
     lookup: SonarrSeries,
     options: AddSonarrSeriesOptions
@@ -233,15 +249,23 @@ export class SonarrClient {
     const rootFolderPath =
       this.rootFolderFor(lookup, options);
 
+    const qualityProfileId =
+      this.qualityProfileFor(
+        lookup,
+        options
+      );
+
     if (!rootFolderPath) {
       throw new Error(
         'Sonarr root folder is not configured.'
       );
     }
 
-    if (!options.qualityProfileId) {
+    if (!qualityProfileId) {
       throw new Error(
-        'Sonarr quality profile is not configured.'
+        lookup.seriesType === 'anime'
+          ? 'Sonarr anime quality profile is not configured.'
+          : 'Sonarr quality profile is not configured.'
       );
     }
 
@@ -249,8 +273,7 @@ export class SonarrClient {
       ...lookup,
 
       rootFolderPath,
-      qualityProfileId:
-        options.qualityProfileId,
+      qualityProfileId,
 
       // We request individual episodes ourselves.
       monitored: false,

@@ -12,6 +12,7 @@ export interface AppConfig {
   databasePath: string;
   moviesPath: string;
   tvPath: string;
+  animePath: string;
   scanIntervalMinutes: number;
   streamTokenExpiryHours: number;
   longLivedStreamTokens: boolean;
@@ -62,6 +63,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     databasePath,
     moviesPath: env.MOVIES_PATH || '/media/movies',
     tvPath: env.TV_PATH || '/media/tv',
+    animePath: env.ANIME_PATH?.trim() || '',
     scanIntervalMinutes: numberValue(env.SCAN_INTERVAL_MINUTES, 30, 1),
     streamTokenExpiryHours: numberValue(env.STREAM_TOKEN_EXPIRY_HOURS, 168, 1),
     longLivedStreamTokens: booleanValue(env.LONG_LIVED_STREAM_TOKENS, false),

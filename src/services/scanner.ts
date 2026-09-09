@@ -16,8 +16,8 @@ import type { TmdbService } from './tmdb.js';
 interface FoundFile { absolutePath: string; relativePath: string; type: MediaType; size: number; mtimeMs: number }
 type ScanMode = 'changed' | 'full' | 'watcher' | 'startup';
 
-function stableFileId(type: MediaType, relativePath: string): string {
-  return `file_${createHash('sha256').update(`${type}:${relativePath}`).digest('hex').slice(0, 24)}`;
+function stableFileId(type: MediaType, absolutePath: string): string {
+  return `file_${createHash('sha256').update(`${type}:${absolutePath}`).digest('hex').slice(0, 24)}`;
 }
 
 function subtitleLanguage(name: string, mediaStem: string): string | null {
@@ -71,18 +71,32 @@ export class MediaScanner {
     const runId = randomUUID();
     const startedAt = Date.now();
     this.database.sqlite.prepare('INSERT INTO scan_runs (id,mode,status,started_at) VALUES (?,?,?,?)').run(runId, mode, 'running', startedAt);
-    const roots: Array<{ path: string; type: MediaType }> = [
-      { path: this.settings.moviesPath, type: 'movie' }, { path: this.settings.tvPath, type: 'series' }
+    const configuredRoots: Array<{ path: string; type: MediaType }> = [
+      { path: this.settings.moviesPath, type: 'movie' },
+      { path: this.settings.tvPath, type: 'series' },
+      ...(this.settings.animePath
+        ? [{ path: this.settings.animePath, type: 'series' as MediaType }]
+        : [])
     ];
+
+    const roots = [
+      ...new Map(
+        configuredRoots.map((root) => [
+          `${root.type}:${path.resolve(root.path)}`,
+          root
+        ])
+      ).values()
+    ];
+
     const files: FoundFile[] = [];
-    const scannedTypes = new Set<MediaType>();
+    const scannedRoots: Array<{ path: string; type: MediaType }> = [];
     let errors = 0;
     for (const root of roots) {
       try {
         const stat = await fs.promises.stat(root.path);
         if (!stat.isDirectory()) throw new Error('not a directory');
         files.push(...await walk(root.path, root.type, this.settings.minimumFileSizeMb * 1024 * 1024));
-        scannedTypes.add(root.type);
+        scannedRoots.push(root);
       } catch (error) {
         errors += 1;
         this.logger.warn({ libraryType: root.type, error: error instanceof Error ? error.message : String(error) }, 'Media directory is unavailable');
@@ -118,8 +132,22 @@ export class MediaScanner {
       }
     })));
 
-    for (const type of scannedTypes) {
-      this.database.sqlite.prepare('DELETE FROM media_files WHERE library_type=? AND last_seen_at < ?').run(type, startedAt);
+    for (const root of scannedRoots) {
+      const rootPrefix = path.resolve(root.path) + path.sep;
+
+      this.database.sqlite
+        .prepare(
+          `DELETE FROM media_files
+           WHERE library_type=?
+             AND substr(absolute_path, 1, ?) = ?
+             AND last_seen_at < ?`
+        )
+        .run(
+          root.type,
+          rootPrefix.length,
+          rootPrefix,
+          startedAt
+        );
     }
     this.database.sqlite.prepare(`UPDATE scan_runs SET status='completed',finished_at=?,processed=?,matched=?,unmatched=?,errors=? WHERE id=?`)
       .run(Date.now(), processed, matched, unmatched, errors, runId);
@@ -161,7 +189,7 @@ export class MediaScanner {
         }
       }
     }
-    const id = existing?.id || stableFileId(file.type, file.relativePath);
+    const id = existing?.id || stableFileId(file.type, file.absolutePath);
     const now = Date.now();
     this.database.sqlite.prepare(`INSERT INTO media_files (
       id,library_type,absolute_path,relative_path,size,mtime_ms,duration_seconds,bitrate,video_codec,audio_codec,
@@ -219,16 +247,24 @@ export class MediaScanner {
   private recordFileError(file: FoundFile, scanTime: number, error: unknown): void {
     const existing = this.database.sqlite.prepare('SELECT id,added_at FROM media_files WHERE absolute_path=?').get(file.absolutePath) as { id: string; added_at: number } | undefined;
     const rawMessage = error instanceof Error ? error.message : 'Unknown scan error';
-    const message = rawMessage
+    let message = rawMessage
       .replaceAll(file.absolutePath, '[media file]')
       .replaceAll(this.settings.moviesPath, '[movies]')
-      .replaceAll(this.settings.tvPath, '[tv]')
-      .slice(0, 500);
+      .replaceAll(this.settings.tvPath, '[tv]');
+
+    if (this.settings.animePath) {
+      message = message.replaceAll(
+        this.settings.animePath,
+        '[anime]'
+      );
+    }
+
+    message = message.slice(0, 500);
     this.database.sqlite.prepare(`INSERT INTO media_files
       (id,library_type,absolute_path,relative_path,size,mtime_ms,status,error,added_at,updated_at,last_seen_at)
       VALUES (?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(absolute_path) DO UPDATE SET size=excluded.size,mtime_ms=excluded.mtime_ms,
       status='error',error=excluded.error,updated_at=excluded.updated_at,last_seen_at=excluded.last_seen_at`)
-      .run(existing?.id || stableFileId(file.type, file.relativePath), file.type, file.absolutePath, file.relativePath,
+      .run(existing?.id || stableFileId(file.type, file.absolutePath), file.type, file.absolutePath, file.relativePath,
         file.size, file.mtimeMs, 'error', message, existing?.added_at || Date.now(), Date.now(), scanTime);
   }
 
@@ -237,7 +273,18 @@ export class MediaScanner {
     this.timer = setInterval(() => void this.scan('changed'), this.settings.scanIntervalMinutes * 60_000);
     this.timer.unref();
     if (this.config.watch) {
-      this.watcher = chokidar.watch([this.settings.moviesPath, this.settings.tvPath], {
+      const watchRoots = [
+        this.settings.moviesPath,
+        this.settings.tvPath,
+        ...(this.settings.animePath
+          ? [this.settings.animePath]
+          : [])
+      ].filter(
+        (value, index, values) =>
+          values.indexOf(value) === index
+      );
+
+      this.watcher = chokidar.watch(watchRoots, {
         ignoreInitial: true, awaitWriteFinish: { stabilityThreshold: 5_000, pollInterval: 500 },
         ignored: (candidate) => path.basename(candidate).startsWith('.')
       });

@@ -16,6 +16,7 @@ export class SettingsService {
   get tmdbApiKey(): string { return this.get('tmdbApiKey', this.defaults.tmdbApiKey); }
   get moviesPath(): string { return this.get('moviesPath', this.defaults.moviesPath); }
   get tvPath(): string { return this.get('tvPath', this.defaults.tvPath); }
+  get animePath(): string { return this.get('animePath', this.defaults.animePath); }
   get scanIntervalMinutes(): number { return this.number('scanIntervalMinutes', this.defaults.scanIntervalMinutes, 1); }
   get minimumFileSizeMb(): number { return this.number('minimumFileSizeMb', this.defaults.minimumFileSizeMb, 0); }
   get streamTokenExpiryHours(): number {
@@ -78,6 +79,10 @@ export class SettingsService {
     return this.number('sonarrQualityProfileId', 0, 0);
   }
 
+  get sonarrAnimeQualityProfileId(): number {
+    return this.number('sonarrAnimeQualityProfileId', 0, 0);
+  }
+
   private number(key: string, fallback: number, minimum: number): number {
     const parsed = Number(this.database.getSetting(key));
     return Number.isFinite(parsed) && parsed >= minimum ? parsed : fallback;
@@ -96,6 +101,7 @@ export class SettingsService {
       metadataProvider: this.tmdbApiKey ? 'TMDB with automatic Cinemeta fallback' : 'Automatic Cinemeta with local fallback',
       moviesPath: this.moviesPath,
       tvPath: this.tvPath,
+      animePath: this.animePath,
       scanIntervalMinutes: this.scanIntervalMinutes,
       minimumFileSizeMb: this.minimumFileSizeMb,
       streamTokenExpiryHours: this.streamTokenExpiryHours,
@@ -116,7 +122,8 @@ export class SettingsService {
       sonarrRootFolderPath: this.sonarrRootFolderPath,
       sonarrSeparateAnimeRoot: this.sonarrSeparateAnimeRoot,
       sonarrAnimeRootFolderPath: this.sonarrAnimeRootFolderPath,
-      sonarrQualityProfileId: this.sonarrQualityProfileId
+      sonarrQualityProfileId: this.sonarrQualityProfileId,
+      sonarrAnimeQualityProfileId: this.sonarrAnimeQualityProfileId
     };
   }
 }

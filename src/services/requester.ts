@@ -671,7 +671,11 @@ export class RequestService {
 
           qualityProfileId:
             this.settings
-              .sonarrQualityProfileId
+              .sonarrQualityProfileId,
+
+          animeQualityProfileId:
+            this.settings
+              .sonarrAnimeQualityProfileId
         }
       );
 
