@@ -199,6 +199,33 @@ export function registerAdminRoutes(
       .send({ requests });
   });
 
+  app.post('/admin/api/requests/:id/retry', { preHandler: requireAdmin(config, true) }, async (request, reply) => {
+    const { id } = request.params as { id: string };
+
+    try {
+      const started = requester.retryFailed(id);
+
+      if (!started) {
+        return reply.code(409).send({
+          error: 'This request cannot be retried right now. It may no longer be failed or may already be running.'
+        });
+      }
+
+      return reply.code(202).send({
+        ok: true
+      });
+    } catch (error) {
+      const message =
+        error instanceof Error
+          ? error.message
+          : 'The request could not be retried.';
+
+      return reply.code(400).send({
+        error: message
+      });
+    }
+  });
+
   app.get('/admin/api/files/:id', { preHandler: requireAdmin(config) }, async (request, reply) => {
     const { id } = request.params as { id: string };
     const file = fileDetail(database, id);
