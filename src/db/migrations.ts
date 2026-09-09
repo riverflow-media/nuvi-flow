@@ -54,5 +54,51 @@ export const migrations = [
     errors INTEGER NOT NULL DEFAULT 0, started_at INTEGER NOT NULL, finished_at INTEGER, message TEXT
   );`,
   `CREATE INDEX IF NOT EXISTS media_files_seen_idx ON media_files(last_seen_at);`,
-  `ALTER TABLE media_files ADD COLUMN audio_tracks_json TEXT NOT NULL DEFAULT '[]';`
+  `ALTER TABLE media_files ADD COLUMN audio_tracks_json TEXT NOT NULL DEFAULT '[]';`,
+  `CREATE TABLE IF NOT EXISTS media_requests (
+    id TEXT PRIMARY KEY,
+    request_key TEXT NOT NULL UNIQUE,
+
+    media_type TEXT NOT NULL CHECK(media_type IN ('movie','series')),
+    stremio_id TEXT NOT NULL,
+
+    imdb_id TEXT,
+    tvdb_id INTEGER,
+
+    season INTEGER,
+    episode INTEGER,
+
+    title TEXT,
+
+    backend TEXT NOT NULL CHECK(backend IN ('radarr','sonarr')),
+    backend_item_id INTEGER,
+
+    status TEXT NOT NULL CHECK(status IN (
+      'pending',
+      'requested',
+      'searching',
+      'available',
+      'failed'
+    )),
+
+    message TEXT,
+
+    attempts INTEGER NOT NULL DEFAULT 0,
+    last_attempt_at INTEGER,
+
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+  );
+
+  CREATE INDEX IF NOT EXISTS media_requests_status_idx
+    ON media_requests(status);
+
+  CREATE INDEX IF NOT EXISTS media_requests_updated_idx
+    ON media_requests(updated_at);
+
+  CREATE INDEX IF NOT EXISTS media_requests_imdb_idx
+    ON media_requests(imdb_id);
+
+  CREATE INDEX IF NOT EXISTS media_requests_tvdb_idx
+    ON media_requests(tvdb_id);`
 ] as const;
