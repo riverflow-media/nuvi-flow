@@ -14,6 +14,7 @@ export class SettingsService {
 
   get baseUrl(): string { return this.get('baseUrl', this.defaults.baseUrl).replace(/\/+$/, ''); }
   get addonName(): string { return this.get('addonName', this.defaults.addonName); }
+  get addonIconUpdatedAt(): number { return this.number('addonIconUpdatedAt', 0, 0); }
   get tmdbApiKey(): string { return this.get('tmdbApiKey', this.defaults.tmdbApiKey); }
   get moviesPath(): string { return this.get('moviesPath', this.defaults.moviesPath); }
   get tvPath(): string { return this.get('tvPath', this.defaults.tvPath); }
@@ -99,6 +100,7 @@ export class SettingsService {
     return {
       baseUrl: this.baseUrl,
       addonName: this.addonName,
+      addonIconUpdatedAt: this.addonIconUpdatedAt,
       tmdbConfigured: Boolean(this.tmdbApiKey),
       metadataProvider: this.tmdbApiKey ? 'TMDB with automatic Cinemeta fallback' : 'Automatic Cinemeta with local fallback',
       moviesPath: this.moviesPath,

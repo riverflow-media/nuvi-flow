@@ -10,9 +10,9 @@ import type { RequestService } from '../services/requester.js';
 import type { AppConfig } from '../config.js';
 
 const manifest = {
-  id: 'community.zimapersonalmedia',
-  version: '1.1.0',
-  name: 'Zima Personal Media',
+  id: 'community.nuviflow',
+  version: '1.1.1',
+  name: 'Nuvi-Flow',
   description: 'Direct playback of your personal movie and TV library.',
   resources: ['catalog', 'meta', 'stream'],
   types: ['movie', 'series'],
@@ -59,7 +59,9 @@ export function registerStremioRoutes(
       .header('Cache-Control', 'no-store')
       .send({
         ...manifest,
-        name: settings.addonName
+        name: settings.addonName,
+        logo:
+          `${settings.baseUrl}/addon-icon?v=${settings.addonIconUpdatedAt}`
       });
   });
 
@@ -136,7 +138,7 @@ export function registerStremioRoutes(
           url: `${settings.baseUrl}/subtitles/${encodeURIComponent(token)}/${encodeURIComponent(subtitle.id)}`
         })),
         behaviorHints: {
-          bingeGroup: `zima-personal-media:${file.media_item_id}`,
+          bingeGroup: `nuvi-flow:${file.media_item_id}`,
           filename: path.basename(file.relative_path),
           videoSize: file.size
         },

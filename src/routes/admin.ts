@@ -3,6 +3,12 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import type { AppConfig } from '../config.js';
 import type { AppDatabase } from '../db/index.js';
 import { adminHtml, loginHtml } from '../admin/assets.js';
+import {
+  detectAddonIconType,
+  MAX_ADDON_ICON_BYTES,
+  removeAddonIcon,
+  writeAddonIcon
+} from '../lib/branding.js';
 import { createSessionToken, createStreamToken, hashPassword, verifyPassword, verifySessionToken, type AdminSession } from '../lib/security.js';
 import { parseJson } from '../lib/json.js';
 import type { MediaFileRow, MediaItemRow, MediaType } from '../types.js';
@@ -14,7 +20,7 @@ import type { SettingsService } from '../services/settings.js';
 import type { TmdbService } from '../services/tmdb.js';
 import type { MetadataSearchResult } from '../services/tmdb.js';
 
-const COOKIE_NAME = 'zpm_admin';
+const COOKIE_NAME = 'nuviflow_admin';
 
 type AdminMediaFileRow = MediaFileRow & {
   display_title?: string | null;
@@ -440,6 +446,79 @@ export function registerAdminRoutes(
         error: `${service === 'radarr' ? 'Radarr' : 'Sonarr'} connection failed: ${detail}`
       });
     }
+  });
+
+  app.post('/admin/api/branding/icon', {
+    preHandler: requireAdmin(config, true)
+  }, async (request, reply) => {
+    const part = await request.file();
+
+    if (!part) {
+      return reply.code(400).send({
+        error: 'Choose an icon to upload'
+      });
+    }
+
+    const buffer = await part.toBuffer();
+
+    if (!buffer.length) {
+      return reply.code(400).send({
+        error: 'The selected icon is empty'
+      });
+    }
+
+    if (buffer.length > MAX_ADDON_ICON_BYTES) {
+      return reply.code(413).send({
+        error: 'Addon icon must be 2 MB or smaller'
+      });
+    }
+
+    const mime =
+      detectAddonIconType(buffer);
+
+    if (!mime) {
+      return reply.code(400).send({
+        error: 'Addon icon must be a PNG, JPG, or WEBP image'
+      });
+    }
+
+    await writeAddonIcon(
+      config,
+      buffer
+    );
+
+    const updatedAt =
+      Date.now();
+
+    settings.set(
+      'addonIconUpdatedAt',
+      String(updatedAt)
+    );
+
+    return reply.send({
+      ok: true,
+      iconUrl:
+        `${settings.baseUrl}/addon-icon?v=${updatedAt}`,
+      settings: settings.publicView()
+    });
+  });
+
+  app.delete('/admin/api/branding/icon', {
+    preHandler: requireAdmin(config, true)
+  }, async (_request, reply) => {
+    await removeAddonIcon(config);
+
+    settings.set(
+      'addonIconUpdatedAt',
+      '0'
+    );
+
+    return reply.send({
+      ok: true,
+      iconUrl:
+        `${settings.baseUrl}/addon-icon?v=0`,
+      settings: settings.publicView()
+    });
   });
 
   app.put('/admin/api/settings', { preHandler: requireAdmin(config, true) }, async (request, reply) => {

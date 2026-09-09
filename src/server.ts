@@ -1,9 +1,17 @@
+import fs from 'node:fs';
 import Fastify, { type FastifyInstance } from 'fastify';
 import cookie from '@fastify/cookie';
 import formbody from '@fastify/formbody';
+import multipart from '@fastify/multipart';
 import rateLimit from '@fastify/rate-limit';
 import type { AppConfig } from './config.js';
 import { AppDatabase } from './db/index.js';
+import {
+  addonIconPath,
+  defaultAddonIconSvg,
+  detectAddonIconType,
+  MAX_ADDON_ICON_BYTES
+} from './lib/branding.js';
 import { hashPassword } from './lib/security.js';
 import { registerAdminRoutes } from './routes/admin.js';
 import { registerMediaRoutes } from './routes/media.js';
@@ -33,10 +41,76 @@ export async function buildApp(config: AppConfig): Promise<BuiltApp> {
   });
   await app.register(cookie);
   await app.register(formbody);
+  await app.register(multipart, {
+    limits: {
+      files: 1,
+      fileSize: MAX_ADDON_ICON_BYTES
+    }
+  });
   await app.register(rateLimit, { global: false, keyGenerator: (request) => request.ip });
   const database = new AppDatabase(config.databasePath);
   const settings = new SettingsService(database, config);
   if (!settings.adminPasswordHash) settings.set('adminPasswordHash', await hashPassword(config.adminPassword));
+
+  app.get('/addon-icon', {
+    config: {
+      rateLimit: {
+        max: 600,
+        timeWindow: '1 minute'
+      }
+    }
+  }, async (request, reply) => {
+    const versioned =
+      request.url.includes('?v=') ||
+      request.url.includes('&v=');
+
+    try {
+      const buffer =
+        await fs.promises.readFile(
+          addonIconPath(config)
+        );
+
+      const mime =
+        detectAddonIconType(buffer);
+
+      if (!mime) {
+        throw new Error(
+          'Stored addon icon has an unsupported format'
+        );
+      }
+
+      return reply
+        .header(
+          'Cache-Control',
+          versioned
+            ? 'public, max-age=31536000, immutable'
+            : 'no-store'
+        )
+        .type(mime)
+        .send(buffer);
+    } catch (error) {
+      if (
+        (error as NodeJS.ErrnoException)
+          .code !== 'ENOENT'
+      ) {
+        app.log.warn(
+          { error },
+          'Could not load custom addon icon'
+        );
+      }
+
+      return reply
+        .header(
+          'Cache-Control',
+          versioned
+            ? 'public, max-age=300'
+            : 'no-store'
+        )
+        .type('image/svg+xml')
+        .send(defaultAddonIconSvg());
+    }
+  });
+
   const tmdb = new TmdbService(database, settings);
   const requester = new RequestService(database, settings, app.log);
   const scanner = new MediaScanner(

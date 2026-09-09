@@ -56,7 +56,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     port: numberValue(env.PORT, 60500, 1),
     host: env.HOST || '0.0.0.0',
     baseUrl: cleanBaseUrl(env.BASE_URL || `http://localhost:${env.PORT || 60500}`),
-    addonName: env.ADDON_NAME?.trim() || 'Zima Personal Media',
+    addonName: env.ADDON_NAME?.trim() || 'Nuvi-Flow',
     tmdbApiKey: env.TMDB_API_KEY?.trim() || '',
     adminUsername: env.ADMIN_USERNAME?.trim() || 'admin',
     adminPassword: env.ADMIN_PASSWORD || 'change-me',
