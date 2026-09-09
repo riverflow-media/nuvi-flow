@@ -39,7 +39,18 @@ export async function buildApp(config: AppConfig): Promise<BuiltApp> {
   if (!settings.adminPasswordHash) settings.set('adminPasswordHash', await hashPassword(config.adminPassword));
   const tmdb = new TmdbService(database, settings);
   const requester = new RequestService(database, settings, app.log);
-  const scanner = new MediaScanner(database, settings, tmdb, config, app.log);
+  const scanner = new MediaScanner(
+    database,
+    settings,
+    tmdb,
+    requester,
+    config,
+    app.log
+  );
+
+  requester.setLibraryRescanHandler(
+    () => scanner.scan('changed')
+  );
 
   app.addHook('onRequest', async (request, reply) => {
     if (request.url.startsWith('/admin')) return;

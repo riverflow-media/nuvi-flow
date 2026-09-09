@@ -10,6 +10,7 @@ import type { AppDatabase } from '../db/index.js';
 import { isMediaFilename, parseEpisodeFilename, parseMovieFilename, shouldIgnorePath } from '../lib/filename-parser.js';
 import type { MediaFileRow, MediaType } from '../types.js';
 import { inspectMedia } from './ffprobe.js';
+import type { RequestService } from './requester.js';
 import type { SettingsService } from './settings.js';
 import type { TmdbService } from './tmdb.js';
 
@@ -55,6 +56,7 @@ export class MediaScanner {
     private readonly database: AppDatabase,
     private readonly settings: SettingsService,
     private readonly tmdb: TmdbService,
+    private readonly requester: RequestService,
     private readonly config: AppConfig,
     private readonly logger: FastifyBaseLogger
   ) {}
@@ -149,10 +151,14 @@ export class MediaScanner {
           startedAt
         );
     }
+    const requestsAdded =
+      this.requester
+        .reconcileAvailableFromLibrary();
+
     this.database.sqlite.prepare(`UPDATE scan_runs SET status='completed',finished_at=?,processed=?,matched=?,unmatched=?,errors=? WHERE id=?`)
       .run(Date.now(), processed, matched, unmatched, errors, runId);
     this.database.sqlite.prepare('DELETE FROM stream_tokens WHERE expires_at < ?').run(Date.now());
-    this.logger.info({ runId, discovered: files.length, processed, matched, unmatched, errors }, 'Media scan completed');
+    this.logger.info({ runId, discovered: files.length, processed, matched, unmatched, errors, requestsAdded }, 'Media scan completed');
   }
 
   private async processFile(file: FoundFile, existing: MediaFileRow | undefined, scanTime: number): Promise<'matched' | 'unmatched' | 'ignored'> {

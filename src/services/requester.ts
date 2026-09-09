@@ -55,6 +55,7 @@ interface EpisodeRequestId {
 }
 
 const FAILED_RETRY_COOLDOWN_MS = 15 * 60 * 1000;
+const AVAILABLE_DISPLAY_MS = 5 * 60 * 1000;
 
 function parseEpisodeId(
   id: string
@@ -96,11 +97,114 @@ export class RequestService {
   private readonly inflight =
     new Map<string, Promise<void>>();
 
+  private readonly availableCleanupTimers =
+    new Map<string, NodeJS.Timeout>();
+
+  private libraryRescan:
+    (() => Promise<void> | void) | null = null;
+
   constructor(
     private readonly database: AppDatabase,
     private readonly settings: SettingsService,
     private readonly logger: FastifyBaseLogger
   ) {}
+
+  setLibraryRescanHandler(
+    handler: () => Promise<void> | void
+  ): void {
+    this.libraryRescan = handler;
+
+    const rows = this.database.sqlite
+      .prepare(
+        `SELECT id,updated_at
+         FROM media_requests
+         WHERE status='available'`
+      )
+      .all() as Array<{
+        id: string;
+        updated_at: number;
+      }>;
+
+    for (const row of rows) {
+      this.scheduleAvailableCleanup(
+        row.id,
+        row.updated_at
+      );
+    }
+  }
+
+  private scheduleAvailableCleanup(
+    requestId: string,
+    availableAt: number
+  ): void {
+    const existing =
+      this.availableCleanupTimers.get(
+        requestId
+      );
+
+    if (existing) {
+      clearTimeout(existing);
+    }
+
+    const delayMs =
+      Math.max(
+        0,
+        AVAILABLE_DISPLAY_MS -
+          (Date.now() - availableAt)
+      );
+
+    const timer = setTimeout(
+      () => {
+        this.availableCleanupTimers.delete(
+          requestId
+        );
+
+        const result =
+          this.database.sqlite
+            .prepare(
+              `DELETE FROM media_requests
+               WHERE id=?
+                 AND status='available'`
+            )
+            .run(requestId);
+
+        if (result.changes < 1) {
+          return;
+        }
+
+        this.logger.info(
+          { requestId },
+          'Completed media request removed from queue'
+        );
+
+        if (!this.libraryRescan) {
+          return;
+        }
+
+        Promise.resolve(
+          this.libraryRescan()
+        ).catch(error => {
+          this.logger.warn(
+            {
+              error:
+                error instanceof Error
+                  ? error.message
+                  : String(error)
+            },
+            'Library rescan after request cleanup failed'
+          );
+        });
+      },
+      delayMs
+    );
+
+    timer.unref();
+
+    this.availableCleanupTimers.set(
+      requestId,
+      timer
+    );
+  }
 
   private requestKey(
     type: 'movie' | 'series',
@@ -765,18 +869,134 @@ export class RequestService {
     const requestKey =
       this.requestKey(type, id);
 
+    const existing =
+      this.database.sqlite
+        .prepare(
+          `SELECT id,status,updated_at
+           FROM media_requests
+           WHERE request_key=?`
+        )
+        .get(requestKey) as
+          | {
+              id: string;
+              status: MediaRequestStatus;
+              updated_at: number;
+            }
+          | undefined;
+
+    if (!existing) {
+      return;
+    }
+
+    if (existing.status === 'available') {
+      this.scheduleAvailableCleanup(
+        existing.id,
+        existing.updated_at
+      );
+
+      return;
+    }
+
+    const now = Date.now();
+
     this.database.sqlite
       .prepare(
         `UPDATE media_requests
          SET status='available',
-             message='Available in Personal Media.',
+             message='Added to Personal Media library.',
              updated_at=?
          WHERE request_key=?`
       )
       .run(
-        Date.now(),
+        now,
         requestKey
       );
+
+    this.scheduleAvailableCleanup(
+      existing.id,
+      now
+    );
+  }
+
+  reconcileAvailableFromLibrary(): number {
+    const requests =
+      this.database.sqlite
+        .prepare(
+          `SELECT *
+           FROM media_requests
+           WHERE status!='available'`
+        )
+        .all() as MediaRequestRow[];
+
+    const movieAvailable =
+      this.database.sqlite.prepare(
+        `SELECT 1
+         FROM media_files mf
+         JOIN media_items mi
+           ON mi.id=mf.media_item_id
+         WHERE mi.type='movie'
+           AND mi.stremio_id=?
+           AND mf.status='matched'
+         LIMIT 1`
+      );
+
+    const episodeAvailable =
+      this.database.sqlite.prepare(
+        `SELECT 1
+         FROM media_files mf
+         JOIN media_items mi
+           ON mi.id=mf.media_item_id
+         WHERE mi.type='series'
+           AND mi.stremio_id=?
+           AND mf.status='matched'
+           AND mf.season=?
+           AND mf.episode_start<=?
+           AND mf.episode_end>=?
+         LIMIT 1`
+      );
+
+    let added = 0;
+
+    for (const request of requests) {
+      let available = false;
+
+      if (request.media_type === 'movie') {
+        available = Boolean(
+          movieAvailable.get(
+            request.stremio_id
+          )
+        );
+      } else {
+        const parsed =
+          parseEpisodeId(
+            request.stremio_id
+          );
+
+        if (parsed) {
+          available = Boolean(
+            episodeAvailable.get(
+              parsed.itemId,
+              parsed.season,
+              parsed.episode,
+              parsed.episode
+            )
+          );
+        }
+      }
+
+      if (!available) {
+        continue;
+      }
+
+      this.markAvailable(
+        request.media_type,
+        request.stremio_id
+      );
+
+      added += 1;
+    }
+
+    return added;
   }
 
   listRequests(
