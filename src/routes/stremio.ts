@@ -6,6 +6,7 @@ import { createStreamToken } from '../lib/security.js';
 import { catalogPreview, fullMeta, streamTitle } from '../stremio/builders.js';
 import type { ExternalSubtitleRow, MediaFileRow, MediaItemRow, MediaType } from '../types.js';
 import type { SettingsService } from '../services/settings.js';
+import type { RequestService } from '../services/requester.js';
 import type { AppConfig } from '../config.js';
 
 const manifest = {
@@ -46,7 +47,13 @@ function episodeId(id: string): { itemId: string; season: number; episode: numbe
   return match ? { itemId: match[1]!, season: Number(match[2]), episode: Number(match[3]) } : null;
 }
 
-export function registerStremioRoutes(app: FastifyInstance, database: AppDatabase, settings: SettingsService, config: AppConfig): void {
+export function registerStremioRoutes(
+  app: FastifyInstance,
+  database: AppDatabase,
+  settings: SettingsService,
+  config: AppConfig,
+  requester: RequestService
+): void {
   app.get('/manifest.json', { config: { rateLimit: { max: 300, timeWindow: '1 minute' } } }, async (_request, reply) => {
     reply.header('Cache-Control', 'public, max-age=300').send(manifest);
   });
@@ -102,6 +109,13 @@ export function registerStremioRoutes(app: FastifyInstance, database: AppDatabas
         WHERE mi.type='series' AND mi.stremio_id=? AND mf.status='matched' AND mf.season=?
         AND mf.episode_start<=? AND mf.episode_end>=? ORDER BY mf.quality DESC`).all(parsed.itemId, parsed.season, parsed.episode, parsed.episode) as MediaFileRow[];
     }
+    if (
+      files.length === 0 &&
+      (type === 'movie' || type === 'series')
+    ) {
+      requester.enqueueMissing(type, id);
+    }
+
     const streams = files.map((file) => {
       const expiry = Date.now() + settings.streamTokenExpiryHours * 60 * 60 * 1000;
       const { token, payload } = createStreamToken(file.id, expiry, config.streamSecret);

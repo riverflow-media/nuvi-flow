@@ -9,6 +9,7 @@ import { registerAdminRoutes } from './routes/admin.js';
 import { registerMediaRoutes } from './routes/media.js';
 import { registerStremioRoutes } from './routes/stremio.js';
 import { MediaScanner } from './services/scanner.js';
+import { RequestService } from './services/requester.js';
 import { SettingsService } from './services/settings.js';
 import { TmdbService } from './services/tmdb.js';
 
@@ -18,6 +19,7 @@ export interface BuiltApp {
   settings: SettingsService;
   scanner: MediaScanner;
   tmdb: TmdbService;
+  requester: RequestService;
 }
 
 export async function buildApp(config: AppConfig): Promise<BuiltApp> {
@@ -36,6 +38,7 @@ export async function buildApp(config: AppConfig): Promise<BuiltApp> {
   const settings = new SettingsService(database, config);
   if (!settings.adminPasswordHash) settings.set('adminPasswordHash', await hashPassword(config.adminPassword));
   const tmdb = new TmdbService(database, settings);
+  const requester = new RequestService(database, settings, app.log);
   const scanner = new MediaScanner(database, settings, tmdb, config, app.log);
 
   app.addHook('onRequest', async (request, reply) => {
@@ -60,7 +63,7 @@ export async function buildApp(config: AppConfig): Promise<BuiltApp> {
       return reply.code(503).send({ status: 'unhealthy' });
     }
   });
-  registerStremioRoutes(app, database, settings, config);
+  registerStremioRoutes(app, database, settings, config, requester);
   registerMediaRoutes(app, database, config);
   registerAdminRoutes(app, database, settings, scanner, tmdb, config);
   app.setNotFoundHandler(async (_request, reply) => reply.code(404).send({ error: 'Not found' }));
@@ -70,5 +73,5 @@ export async function buildApp(config: AppConfig): Promise<BuiltApp> {
     const statusCode = candidate.statusCode && candidate.statusCode < 500 ? candidate.statusCode : 500;
     if (!reply.sent) reply.code(statusCode).send({ error: statusCode < 500 ? candidate.message || 'Invalid request' : 'The request could not be completed.' });
   });
-  return { app, database, settings, scanner, tmdb };
+  return { app, database, settings, scanner, tmdb, requester };
 }
