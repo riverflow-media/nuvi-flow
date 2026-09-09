@@ -26,6 +26,58 @@ export class SettingsService {
   get adminUsername(): string { return this.get('adminUsername', this.defaults.adminUsername); }
   get adminPasswordHash(): string | undefined { return this.database.getSetting('adminPasswordHash'); }
 
+  get autoRequestEnabled(): boolean {
+    return this.boolean('autoRequestEnabled', this.defaults.autoRequestEnabled);
+  }
+
+  get radarrEnabled(): boolean {
+    return this.boolean('radarrEnabled', this.defaults.radarrEnabled);
+  }
+
+  get radarrUrl(): string {
+    return this.get('radarrUrl', this.defaults.radarrUrl).replace(/\/+$/, '');
+  }
+
+  get radarrApiKey(): string {
+    return this.get('radarrApiKey', this.defaults.radarrApiKey);
+  }
+
+  get radarrRootFolderPath(): string {
+    return this.get('radarrRootFolderPath');
+  }
+
+  get radarrQualityProfileId(): number {
+    return this.number('radarrQualityProfileId', 0, 0);
+  }
+
+  get sonarrEnabled(): boolean {
+    return this.boolean('sonarrEnabled', this.defaults.sonarrEnabled);
+  }
+
+  get sonarrUrl(): string {
+    return this.get('sonarrUrl', this.defaults.sonarrUrl).replace(/\/+$/, '');
+  }
+
+  get sonarrApiKey(): string {
+    return this.get('sonarrApiKey', this.defaults.sonarrApiKey);
+  }
+
+  get sonarrRootFolderPath(): string {
+    return this.get('sonarrRootFolderPath');
+  }
+
+  get sonarrSeparateAnimeRoot(): boolean {
+    return this.boolean('sonarrSeparateAnimeRoot', false);
+  }
+
+  get sonarrAnimeRootFolderPath(): string {
+    return this.get('sonarrAnimeRootFolderPath');
+  }
+
+  get sonarrQualityProfileId(): number {
+    return this.number('sonarrQualityProfileId', 0, 0);
+  }
+
   private number(key: string, fallback: number, minimum: number): number {
     const parsed = Number(this.database.getSetting(key));
     return Number.isFinite(parsed) && parsed >= minimum ? parsed : fallback;
@@ -48,7 +100,23 @@ export class SettingsService {
       minimumFileSizeMb: this.minimumFileSizeMb,
       streamTokenExpiryHours: this.streamTokenExpiryHours,
       longLivedStreamTokens: this.longLivedStreamTokens,
-      adminUsername: this.adminUsername
+      adminUsername: this.adminUsername,
+
+      autoRequestEnabled: this.autoRequestEnabled,
+
+      radarrEnabled: this.radarrEnabled,
+      radarrUrl: this.radarrUrl,
+      radarrConfigured: Boolean(this.radarrApiKey),
+      radarrRootFolderPath: this.radarrRootFolderPath,
+      radarrQualityProfileId: this.radarrQualityProfileId,
+
+      sonarrEnabled: this.sonarrEnabled,
+      sonarrUrl: this.sonarrUrl,
+      sonarrConfigured: Boolean(this.sonarrApiKey),
+      sonarrRootFolderPath: this.sonarrRootFolderPath,
+      sonarrSeparateAnimeRoot: this.sonarrSeparateAnimeRoot,
+      sonarrAnimeRootFolderPath: this.sonarrAnimeRootFolderPath,
+      sonarrQualityProfileId: this.sonarrQualityProfileId
     };
   }
 }
