@@ -35,9 +35,9 @@ async function walk(root: string, type: MediaType, minimumBytes: number): Promis
       if (entry.name.startsWith('.')) continue;
       const absolutePath = path.join(directory, entry.name);
       if (entry.isDirectory()) await visit(absolutePath);
-      else if (entry.isFile() && isMediaFilename(entry.name) && !shouldIgnorePath(absolutePath)) {
+      else if ((entry.isFile() || entry.isSymbolicLink()) && isMediaFilename(entry.name) && !shouldIgnorePath(absolutePath)) {
         const stat = await fs.promises.stat(absolutePath);
-        if (stat.size >= minimumBytes) found.push({ absolutePath, relativePath: path.relative(root, absolutePath), type, size: stat.size, mtimeMs: stat.mtimeMs });
+        if (stat.isFile() && stat.size >= minimumBytes) found.push({ absolutePath, relativePath: path.relative(root, absolutePath), type, size: stat.size, mtimeMs: stat.mtimeMs });
       }
     }
   }
