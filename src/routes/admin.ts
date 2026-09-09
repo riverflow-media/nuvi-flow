@@ -9,6 +9,7 @@ import type { MediaFileRow, MediaItemRow, MediaType } from '../types.js';
 import type { MediaScanner } from '../services/scanner.js';
 import { RadarrClient } from '../services/radarr.js';
 import { SonarrClient } from '../services/sonarr.js';
+import type { RequestService } from '../services/requester.js';
 import type { SettingsService } from '../services/settings.js';
 import type { TmdbService } from '../services/tmdb.js';
 import type { MetadataSearchResult } from '../services/tmdb.js';
@@ -120,6 +121,7 @@ export function registerAdminRoutes(
   settings: SettingsService,
   scanner: MediaScanner,
   tmdb: TmdbService,
+  requester: RequestService,
   config: AppConfig
 ): void {
   app.get('/admin/login', async (request, reply) => {
@@ -162,6 +164,39 @@ export function registerAdminRoutes(
       started_at startedAt,finished_at finishedAt,message FROM scan_runs ORDER BY started_at DESC LIMIT 100`).all();
     const publicFiles = files.map(publicFile);
     return reply.header('Cache-Control', 'no-store').send({ counts, files: publicFiles, recent: publicFiles.slice(0, 12), logs, settings: settings.publicView(), scanning: scanner.isRunning() });
+  });
+
+  app.get('/admin/api/requests', { preHandler: requireAdmin(config) }, async (_request, reply) => {
+    const requests = requester.listRequests(500).map((row) => ({
+      id: row.id,
+      requestKey: row.request_key,
+      mediaType: row.media_type,
+      stremioId: row.stremio_id,
+
+      imdbId: row.imdb_id,
+      tvdbId: row.tvdb_id,
+
+      season: row.season,
+      episode: row.episode,
+
+      title: row.title,
+
+      backend: row.backend,
+      backendItemId: row.backend_item_id,
+
+      status: row.status,
+      message: row.message,
+
+      attempts: row.attempts,
+      lastAttemptAt: row.last_attempt_at,
+
+      createdAt: row.created_at,
+      updatedAt: row.updated_at
+    }));
+
+    return reply
+      .header('Cache-Control', 'no-store')
+      .send({ requests });
   });
 
   app.get('/admin/api/files/:id', { preHandler: requireAdmin(config) }, async (request, reply) => {
