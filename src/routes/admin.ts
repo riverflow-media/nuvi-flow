@@ -15,6 +15,7 @@ import type { MediaFileRow, MediaItemRow, MediaType } from '../types.js';
 import type { MediaScanner } from '../services/scanner.js';
 import { RadarrClient } from '../services/radarr.js';
 import { SonarrClient } from '../services/sonarr.js';
+import { SiloClient } from '../services/silo.js';
 import type { RequestService } from '../services/requester.js';
 import type { SettingsService } from '../services/settings.js';
 import type { TmdbService } from '../services/tmdb.js';
@@ -324,7 +325,7 @@ export function registerAdminRoutes(
   app.post('/admin/api/integrations/:service/test', { preHandler: requireAdmin(config, true) }, async (request, reply) => {
     const { service } = request.params as { service: string };
 
-    if (!['radarr', 'sonarr'].includes(service)) {
+    if (!['radarr', 'sonarr', 'silo'].includes(service)) {
       return reply.code(404).send({ error: 'Unknown integration' });
     }
 
@@ -333,22 +334,33 @@ export function registerAdminRoutes(
       apiKey?: string;
     };
 
+    const label =
+      service === 'radarr'
+        ? 'Radarr'
+        : service === 'sonarr'
+          ? 'Sonarr'
+          : 'Silo';
+
     const url = (
       body.url?.trim() ||
       (service === 'radarr'
         ? settings.radarrUrl
-        : settings.sonarrUrl)
+        : service === 'sonarr'
+          ? settings.sonarrUrl
+          : settings.siloUrl)
     ).replace(/\/+$/, '');
 
     const apiKey =
       body.apiKey?.trim() ||
       (service === 'radarr'
         ? settings.radarrApiKey
-        : settings.sonarrApiKey);
+        : service === 'sonarr'
+          ? settings.sonarrApiKey
+          : settings.siloApiKey);
 
     if (!url) {
       return reply.code(400).send({
-        error: `${service === 'radarr' ? 'Radarr' : 'Sonarr'} URL is required`
+        error: `${label} URL is required`
       });
     }
 
@@ -358,23 +370,56 @@ export function registerAdminRoutes(
       parsed = new URL(url);
     } catch {
       return reply.code(400).send({
-        error: `${service === 'radarr' ? 'Radarr' : 'Sonarr'} URL must be valid`
+        error: `${label} URL must be valid`
       });
     }
 
     if (!['http:', 'https:'].includes(parsed.protocol)) {
       return reply.code(400).send({
-        error: `${service === 'radarr' ? 'Radarr' : 'Sonarr'} URL must use HTTP or HTTPS`
+        error: `${label} URL must use HTTP or HTTPS`
       });
     }
 
     if (!apiKey) {
       return reply.code(400).send({
-        error: `${service === 'radarr' ? 'Radarr' : 'Sonarr'} API key is required`
+        error: `${label} API key is required`
       });
     }
 
     try {
+      if (service === 'silo') {
+        const client = new SiloClient(
+          url,
+          apiKey
+        );
+
+        const [health, profiles] =
+          await Promise.all([
+            client.health(),
+            client.profiles()
+          ]);
+
+        return reply.send({
+          ok: true,
+          service: 'silo',
+          instanceName:
+            health.server_name || 'Silo',
+          serverId:
+            health.server_id,
+          status:
+            health.status,
+          profiles: profiles.map(
+            (profile) => ({
+              id: profile.id,
+              name: profile.name,
+              primary: Boolean(
+                profile.primary
+              )
+            })
+          )
+        });
+      }
+
       if (service === 'radarr') {
         const client = new RadarrClient(url, apiKey);
 
@@ -443,7 +488,7 @@ export function registerAdminRoutes(
       );
 
       return reply.code(502).send({
-        error: `${service === 'radarr' ? 'Radarr' : 'Sonarr'} connection failed: ${detail}`
+        error: `${label} connection failed: ${detail}`
       });
     }
   });
@@ -579,17 +624,19 @@ export function registerAdminRoutes(
       'radarrEnabled',
       'sonarrEnabled',
       'sonarrSeparateAnimeRoot',
-      'sonarrMonitorWholeSeries'
+      'sonarrMonitorWholeSeries',
+      'siloEnabled'
     ]) {
       if (body[key] === 'true' || body[key] === 'false') {
         settings.set(key, body[key]!);
       }
     }
 
-    // Radarr/Sonarr URLs may be blank while an integration is disabled.
+    // Integration URLs may be blank while an integration is disabled.
     for (const [key, label] of [
       ['radarrUrl', 'Radarr'],
-      ['sonarrUrl', 'Sonarr']
+      ['sonarrUrl', 'Sonarr'],
+      ['siloUrl', 'Silo']
     ] as const) {
       if (typeof body[key] !== 'string') continue;
 
@@ -614,6 +661,46 @@ export function registerAdminRoutes(
       }
 
       settings.set(key, value);
+    }
+
+    // Silo playback options.
+    if (typeof body.siloProfileId === 'string') {
+      settings.set(
+        'siloProfileId',
+        body.siloProfileId
+      );
+    }
+
+    if (
+      typeof body.siloTranscodeQuality === 'string' &&
+      body.siloTranscodeQuality.trim()
+    ) {
+      const quality =
+        body.siloTranscodeQuality.trim();
+
+      const allowedSiloQualities = new Set([
+        '2160p-high',
+        '2160p-medium',
+        '2160p-low',
+        '1080p-high',
+        '1080p-medium',
+        '1080p-low',
+        '720p-high',
+        '720p-medium',
+        '720p-low',
+        '480p'
+      ]);
+
+      if (!allowedSiloQualities.has(quality)) {
+        return reply.code(400).send({
+          error: 'Silo transcode quality is invalid'
+        });
+      }
+
+      settings.set(
+        'siloTranscodeQuality',
+        quality
+      );
     }
 
     // Optional library/root paths may be cleared.
@@ -657,6 +744,10 @@ export function registerAdminRoutes(
 
     if (body.sonarrApiKey?.trim()) {
       settings.set('sonarrApiKey', body.sonarrApiKey);
+    }
+
+    if (body.siloApiKey?.trim()) {
+      settings.set('siloApiKey', body.siloApiKey);
     }
 
     if (body.newPassword) {

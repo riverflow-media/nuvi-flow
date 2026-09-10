@@ -1,9 +1,12 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { loadConfig } from '../src/config.js';
-import { createStreamToken } from '../src/lib/security.js';
+import {
+  createSiloMediaToken,
+  createStreamToken
+} from '../src/lib/security.js';
 import { buildApp, type BuiltApp } from '../src/server.js';
 
 describe('Stremio and media HTTP endpoints', () => {
@@ -20,7 +23,8 @@ describe('Stremio and media HTTP endpoints', () => {
       PORT: '60500', BASE_URL: 'https://media.example.test', DATABASE_PATH: path.join(directory, 'test.db'),
       MOVIES_PATH: directory, TV_PATH: directory, ADMIN_PASSWORD: 'safe-test-password',
       SESSION_SECRET: 'test-session-secret-at-least-thirty-two-chars', STREAM_SECRET: secret,
-      SCAN_ON_STARTUP: 'false', WATCH_MEDIA: 'false', LOG_LEVEL: 'silent'
+      SCAN_ON_STARTUP: 'false', WATCH_MEDIA: 'false', LOG_LEVEL: 'silent',
+      SILO_ENABLED: 'true', SILO_URL: 'http://silo:8080', SILO_API_KEY: 'test-silo-key'
     });
     built = await buildApp(config);
     const now = Date.now();
@@ -35,6 +39,7 @@ describe('Stremio and media HTTP endpoints', () => {
   });
 
   afterEach(async () => {
+    vi.unstubAllGlobals();
     await built.app.close();
     built.database.close();
     fs.rmSync(directory, { recursive: true, force: true });
@@ -63,6 +68,40 @@ describe('Stremio and media HTTP endpoints', () => {
     expect(response.json().streams[0].url).toMatch(/^https:\/\/media\.example\.test\/media\//);
   });
 
+  it('adds a second Silo transcoded stream without changing direct playback', async () => {
+    built.settings.set(
+      'siloProfileId',
+      'profile-1'
+    );
+
+    const response = await built.app.inject({
+      method: 'GET',
+      url: '/stream/movie/tt1234567.json'
+    });
+
+    expect(response.statusCode).toBe(200);
+
+    const streams = response.json().streams;
+
+    expect(streams).toHaveLength(2);
+
+    expect(streams[0]).toMatchObject({
+      title: '1080p • H.264 • AAC 5.1'
+    });
+
+    expect(streams[0].url).toMatch(
+      /^https:\/\/media\.example\.test\/media\//
+    );
+
+    expect(streams[1].url).toMatch(
+      /^https:\/\/media\.example\.test\/silo-stream\//
+    );
+
+    expect(streams[1].title).toContain(
+      'Silo'
+    );
+  });
+
   it('serves exact partial content and invalid ranges', async () => {
     const valid = await built.app.inject({ method: 'GET', url: `/media/${encodeURIComponent(token())}`, headers: { range: 'bytes=10-19' } });
     expect(valid.statusCode).toBe(206);
@@ -73,6 +112,272 @@ describe('Stremio and media HTTP endpoints', () => {
     const invalid = await built.app.inject({ method: 'GET', url: `/media/${encodeURIComponent(token())}`, headers: { range: 'bytes=100-' } });
     expect(invalid.statusCode).toBe(416);
     expect(invalid.headers['content-range']).toBe('bytes */36');
+  });
+
+  it('proxies signed Silo media with server-side authentication', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        Buffer.from('test-segment'),
+        {
+          status: 200,
+          headers: {
+            'Content-Type': 'video/mp2t'
+          }
+        }
+      )
+    );
+
+    vi.stubGlobal('fetch', fetchMock);
+
+    const { token } = createSiloMediaToken(
+      '/api/v1/playback/transcode/session-1/segment/seg_00000.ts',
+      Date.now() + 60_000,
+      secret
+    );
+
+    const response = await built.app.inject({
+      method: 'GET',
+      url:
+        `/silo-media/${encodeURIComponent(token)}`
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.body).toBe('test-segment');
+
+    const [url, init] =
+      fetchMock.mock.calls[0] as [
+        string,
+        RequestInit
+      ];
+
+    expect(url).toBe(
+      'http://silo:8080/api/v1/playback/transcode/session-1/segment/seg_00000.ts'
+    );
+
+    const headers = new Headers(
+      init.headers
+    );
+
+    expect(
+      headers.get('Authorization')
+    ).toBe('Bearer test-silo-key');
+
+    expect(response.body).not.toContain(
+      'test-silo-key'
+    );
+  });
+
+  it('starts Silo transcoded HLS playback for an authorized media file', async () => {
+    built.settings.set(
+      'siloProfileId',
+      'profile-1'
+    );
+
+    built.settings.set(
+      'siloTranscodeQuality',
+      '1080p-medium'
+    );
+
+    const fetchMock = vi.fn().mockImplementation(
+      async (
+        url: string,
+        init?: RequestInit
+      ) => {
+        if (
+          url.endsWith(
+            '/api/v1/catalog/items/movie-tmdb-123/versions'
+          )
+        ) {
+          return new Response(
+            JSON.stringify([
+              {
+                file_id: 120,
+                file_path: mediaPath
+              }
+            ]),
+            {
+              status: 200,
+              headers: {
+                'Content-Type':
+                  'application/json'
+              }
+            }
+          );
+        }
+
+        if (
+          url.endsWith(
+            '/api/v1/playback/start'
+          )
+        ) {
+          expect(init?.method).toBe('POST');
+
+          const body = JSON.parse(
+            String(init?.body)
+          );
+
+          expect(body).toMatchObject({
+            protocol_version: 3,
+            file_id: 120,
+            profile_id: 'profile-1',
+            quality_preference:
+              '1080p-medium'
+          });
+
+          return new Response(
+            JSON.stringify({
+              protocol_version: 3,
+              server_features: [
+                'playback_plan_v3',
+                'header_authenticated_media_v1'
+              ],
+              outcome: 'playable',
+              session_id: 'session-1',
+              playback_plan: {
+                delivery:
+                  'server_transcode_hls',
+                stream: {
+                  url:
+                    '/playback/transcode/session-1/master.m3u8',
+                  protocol: 'hls',
+                  container: 'hls',
+                  mime_type:
+                    'application/vnd.apple.mpegurl',
+                  headers: {},
+                  header_refresh: 'none'
+                }
+              }
+            }),
+            {
+              status: 201,
+              headers: {
+                'Content-Type':
+                  'application/json'
+              }
+            }
+          );
+        }
+
+        return new Response(null, {
+          status: 404
+        });
+      }
+    );
+
+    vi.stubGlobal('fetch', fetchMock);
+
+    const response =
+      await built.app.inject({
+        method: 'GET',
+        url:
+          `/silo-stream/${encodeURIComponent(token())}`
+      });
+
+    expect(response.statusCode).toBe(302);
+
+    expect(
+      response.headers.location
+    ).toMatch(
+      /^\/silo-media\//
+    );
+
+    expect(
+      response.headers.location
+    ).not.toContain(
+      'test-silo-key'
+    );
+  });
+
+  it('rewrites Silo HLS segment URLs through the signed proxy', async () => {
+    const fetchMock = vi.fn().mockImplementation(
+      async (url: string) => {
+        if (url.endsWith('/master.m3u8')) {
+          return new Response(
+            '#EXTM3U\n#EXTINF:2.000000,\nsegment/seg_00000.ts\n',
+            {
+              status: 200,
+              headers: {
+                'Content-Type':
+                  'application/vnd.apple.mpegurl'
+              }
+            }
+          );
+        }
+
+        if (url.endsWith('/segment/seg_00000.ts')) {
+          return new Response(
+            Buffer.from('test-segment'),
+            {
+              status: 200,
+              headers: {
+                'Content-Type': 'video/mp2t'
+              }
+            }
+          );
+        }
+
+        return new Response(null, {
+          status: 404
+        });
+      }
+    );
+
+    vi.stubGlobal('fetch', fetchMock);
+
+    const { token } = createSiloMediaToken(
+      '/api/v1/playback/transcode/session-1/master.m3u8',
+      Date.now() + 60_000,
+      secret
+    );
+
+    const manifestResponse =
+      await built.app.inject({
+        method: 'GET',
+        url:
+          `/silo-media/${encodeURIComponent(token)}`
+      });
+
+    expect(
+      manifestResponse.statusCode
+    ).toBe(200);
+
+    const lines =
+      manifestResponse.body
+        .split('\n')
+        .map(line => line.trim());
+
+    const segmentUrl = lines.find(
+      line =>
+        line &&
+        !line.startsWith('#')
+    );
+
+    expect(segmentUrl).toMatch(
+      /^\/silo-media\//
+    );
+
+    expect(segmentUrl).not.toContain(
+      'test-silo-key'
+    );
+
+    const segmentResponse =
+      await built.app.inject({
+        method: 'GET',
+        url: segmentUrl!
+      });
+
+    expect(
+      segmentResponse.statusCode
+    ).toBe(200);
+
+    expect(segmentResponse.body).toBe(
+      'test-segment'
+    );
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      'http://silo:8080/api/v1/playback/transcode/session-1/segment/seg_00000.ts',
+      expect.any(Object)
+    );
   });
 
   it('returns GET-equivalent headers and no body for HEAD', async () => {

@@ -149,7 +149,12 @@ export async function buildApp(config: AppConfig): Promise<BuiltApp> {
     }
   });
   registerStremioRoutes(app, database, settings, config, requester);
-  registerMediaRoutes(app, database, config);
+  registerMediaRoutes(
+    app,
+    database,
+    config,
+    settings
+  );
   registerAdminRoutes(app, database, settings, scanner, tmdb, requester, config);
   app.setNotFoundHandler(async (_request, reply) => reply.code(404).send({ error: 'Not found' }));
   app.setErrorHandler(async (error, request, reply) => {

@@ -18,10 +18,34 @@ export interface StreamTokenPayload {
   fileId: string;
   exp: number;
   jti: string;
+  season?: number;
+  episode?: number;
 }
 
-export function createStreamToken(fileId: string, expiresAt: number, secret: string, jti = randomBytes(12).toString('base64url')): { token: string; payload: StreamTokenPayload } {
-  const payload: StreamTokenPayload = { v: 1, fileId, exp: expiresAt, jti };
+export interface StreamTokenContext {
+  season: number;
+  episode: number;
+}
+
+export function createStreamToken(
+  fileId: string,
+  expiresAt: number,
+  secret: string,
+  jti = randomBytes(12).toString('base64url'),
+  context?: StreamTokenContext
+): { token: string; payload: StreamTokenPayload } {
+  const payload: StreamTokenPayload = {
+    v: 1,
+    fileId,
+    exp: expiresAt,
+    jti,
+    ...(context
+      ? {
+          season: context.season,
+          episode: context.episode
+        }
+      : {})
+  };
   const encoded = Buffer.from(JSON.stringify(payload)).toString('base64url');
   return { token: `${encoded}.${signature(encoded, secret)}`, payload };
 }
@@ -32,8 +56,112 @@ export function verifyStreamToken(token: string, secret: string, now = Date.now(
   try {
     const payload = JSON.parse(Buffer.from(encoded, 'base64url').toString('utf8')) as Partial<StreamTokenPayload>;
     if (payload.v !== 1 || typeof payload.fileId !== 'string' || typeof payload.exp !== 'number' || typeof payload.jti !== 'string') return null;
+
+    const hasSeason = payload.season !== undefined;
+    const hasEpisode = payload.episode !== undefined;
+
+    if (hasSeason !== hasEpisode) return null;
+
+    if (
+      hasSeason &&
+      (
+        !Number.isInteger(payload.season) ||
+        payload.season! < 0 ||
+        !Number.isInteger(payload.episode) ||
+        payload.episode! < 1
+      )
+    ) {
+      return null;
+    }
+
     if (payload.exp <= now) return null;
     return payload as StreamTokenPayload;
+  } catch {
+    return null;
+  }
+}
+
+export interface SiloMediaTokenPayload {
+  v: 1;
+  path: string;
+  exp: number;
+}
+
+export function createSiloMediaToken(
+  path: string,
+  expiresAt: number,
+  secret: string
+): {
+  token: string;
+  payload: SiloMediaTokenPayload;
+} {
+  if (!path.startsWith('/api/v1/playback/')) {
+    throw new Error(
+      'Invalid Silo playback media path.'
+    );
+  }
+
+  const payload: SiloMediaTokenPayload = {
+    v: 1,
+    path,
+    exp: expiresAt
+  };
+
+  const encoded = Buffer.from(
+    JSON.stringify(payload)
+  ).toString('base64url');
+
+  return {
+    token:
+      `${encoded}.${signature(encoded, secret)}`,
+    payload
+  };
+}
+
+export function verifySiloMediaToken(
+  token: string,
+  secret: string,
+  now = Date.now()
+): SiloMediaTokenPayload | null {
+  const [
+    encoded,
+    suppliedSignature,
+    extra
+  ] = token.split('.');
+
+  if (
+    !encoded ||
+    !suppliedSignature ||
+    extra ||
+    !safeEqual(
+      signature(encoded, secret),
+      suppliedSignature
+    )
+  ) {
+    return null;
+  }
+
+  try {
+    const payload = JSON.parse(
+      Buffer.from(
+        encoded,
+        'base64url'
+      ).toString('utf8')
+    ) as Partial<SiloMediaTokenPayload>;
+
+    if (
+      payload.v !== 1 ||
+      typeof payload.path !== 'string' ||
+      !payload.path.startsWith(
+        '/api/v1/playback/'
+      ) ||
+      typeof payload.exp !== 'number' ||
+      payload.exp <= now
+    ) {
+      return null;
+    }
+
+    return payload as SiloMediaTokenPayload;
   } catch {
     return null;
   }

@@ -34,6 +34,12 @@ export interface AppConfig {
   sonarrEnabled: boolean;
   sonarrUrl: string;
   sonarrApiKey: string;
+
+  siloEnabled: boolean;
+  siloUrl: string;
+  siloApiKey: string;
+  siloProfileId: string;
+  siloTranscodeQuality: string;
 }
 
 function numberValue(value: string | undefined, fallback: number, minimum = 0): number {
@@ -85,7 +91,16 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
 
     sonarrEnabled: booleanValue(env.SONARR_ENABLED, false),
     sonarrUrl: cleanBaseUrl(env.SONARR_URL || ''),
-    sonarrApiKey: env.SONARR_API_KEY?.trim() || ''
+    sonarrApiKey: env.SONARR_API_KEY?.trim() || '',
+
+    siloEnabled: booleanValue(env.SILO_ENABLED, false),
+    siloUrl: cleanBaseUrl(
+      env.SILO_URL || 'http://silo:8080'
+    ),
+    siloApiKey: env.SILO_API_KEY?.trim() || '',
+    siloProfileId: env.SILO_PROFILE_ID?.trim() || '',
+    siloTranscodeQuality:
+      env.SILO_TRANSCODE_QUALITY?.trim() || '1080p-medium'
   };
 }
 

@@ -89,6 +89,52 @@ export class SettingsService {
     return this.number('sonarrAnimeQualityProfileId', 0, 0);
   }
 
+  get siloEnabled(): boolean {
+    return this.boolean(
+      'siloEnabled',
+      this.defaults.siloEnabled
+    );
+  }
+
+  get siloUrl(): string {
+    return this.get(
+      'siloUrl',
+      this.defaults.siloUrl
+    ).replace(/\/+$/, '');
+  }
+
+  get siloApiKey(): string {
+    return this.get(
+      'siloApiKey',
+      this.defaults.siloApiKey
+    );
+  }
+
+  get siloProfileId(): string {
+    return this.get(
+      'siloProfileId',
+      this.defaults.siloProfileId
+    );
+  }
+
+  get siloTranscodeQuality(): string {
+    const value = this.get(
+      'siloTranscodeQuality',
+      this.defaults.siloTranscodeQuality
+    ).trim();
+
+    switch (value) {
+      case '2160p':
+        return '2160p-medium';
+      case '1080p':
+        return '1080p-medium';
+      case '720p':
+        return '720p-medium';
+      default:
+        return value || '1080p-medium';
+    }
+  }
+
   private number(key: string, fallback: number, minimum: number): number {
     const parsed = Number(this.database.getSetting(key));
     return Number.isFinite(parsed) && parsed >= minimum ? parsed : fallback;
@@ -132,7 +178,13 @@ export class SettingsService {
       sonarrMonitorWholeSeries: this.sonarrMonitorWholeSeries,
       sonarrAnimeRootFolderPath: this.sonarrAnimeRootFolderPath,
       sonarrQualityProfileId: this.sonarrQualityProfileId,
-      sonarrAnimeQualityProfileId: this.sonarrAnimeQualityProfileId
+      sonarrAnimeQualityProfileId: this.sonarrAnimeQualityProfileId,
+
+      siloEnabled: this.siloEnabled,
+      siloUrl: this.siloUrl,
+      siloConfigured: Boolean(this.siloApiKey),
+      siloProfileId: this.siloProfileId,
+      siloTranscodeQuality: this.siloTranscodeQuality
     };
   }
 }

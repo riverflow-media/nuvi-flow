@@ -113,14 +113,26 @@ export function registerStremioRoutes(
   app.get('/stream/:type/:id.json', { config: { rateLimit: { max: 300, timeWindow: '1 minute' } } }, async (request, reply) => {
     const { type, id } = request.params as { type: string; id: string };
     let files: MediaFileRow[] = [];
+    let requestedEpisode:
+      | { season: number; episode: number }
+      | undefined;
+
     if (type === 'movie') {
       files = database.sqlite.prepare(`SELECT mf.* FROM media_files mf JOIN media_items mi ON mi.id=mf.media_item_id
         WHERE mi.type='movie' AND mi.stremio_id=? AND mf.status='matched' ORDER BY mf.quality DESC`).all(id) as MediaFileRow[];
     } else if (type === 'series') {
       const parsed = episodeId(id);
-      if (parsed) files = database.sqlite.prepare(`SELECT mf.* FROM media_files mf JOIN media_items mi ON mi.id=mf.media_item_id
-        WHERE mi.type='series' AND mi.stremio_id=? AND mf.status='matched' AND mf.season=?
-        AND mf.episode_start<=? AND mf.episode_end>=? ORDER BY mf.quality DESC`).all(parsed.itemId, parsed.season, parsed.episode, parsed.episode) as MediaFileRow[];
+
+      if (parsed) {
+        requestedEpisode = {
+          season: parsed.season,
+          episode: parsed.episode
+        };
+
+        files = database.sqlite.prepare(`SELECT mf.* FROM media_files mf JOIN media_items mi ON mi.id=mf.media_item_id
+          WHERE mi.type='series' AND mi.stremio_id=? AND mf.status='matched' AND mf.season=?
+          AND mf.episode_start<=? AND mf.episode_end>=? ORDER BY mf.quality DESC`).all(parsed.itemId, parsed.season, parsed.episode, parsed.episode) as MediaFileRow[];
+      }
     }
     if (
       files.length === 0 &&
@@ -129,13 +141,27 @@ export function registerStremioRoutes(
       requester.enqueueMissing(type, id);
     }
 
-    const streams = files.map((file) => {
-      const expiry = Date.now() + settings.streamTokenExpiryHours * 60 * 60 * 1000;
-      const { token, payload } = createStreamToken(file.id, expiry, config.streamSecret);
+    const streams = files.flatMap((file) => {
+      const expiry =
+        Date.now() +
+        settings.streamTokenExpiryHours *
+          60 *
+          60 *
+          1000;
+
+      const { token, payload } =
+        createStreamToken(
+          file.id,
+          expiry,
+          config.streamSecret
+        );
+
       database.sqlite.prepare('INSERT OR IGNORE INTO stream_tokens (jti,media_file_id,expires_at,created_at,revoked) VALUES (?,?,?,?,0)')
         .run(payload.jti, file.id, payload.exp, Date.now());
+
       const subtitles = database.sqlite.prepare('SELECT * FROM external_subtitles WHERE media_file_id=? ORDER BY language').all(file.id) as ExternalSubtitleRow[];
-      return {
+
+      const directStream = {
         name: streamName(file),
         title: streamTitle(file),
         description: streamDescription(file),
@@ -151,6 +177,62 @@ export function registerStremioRoutes(
           videoSize: file.size
         }
       };
+
+      if (
+        !settings.siloEnabled ||
+        !settings.siloUrl ||
+        !settings.siloApiKey ||
+        !settings.siloProfileId
+      ) {
+        return [directStream];
+      }
+
+      const {
+        token: siloToken,
+        payload: siloPayload
+      } = createStreamToken(
+        file.id,
+        expiry,
+        config.streamSecret,
+        undefined,
+        requestedEpisode
+      );
+
+      database.sqlite.prepare('INSERT OR IGNORE INTO stream_tokens (jti,media_file_id,expires_at,created_at,revoked) VALUES (?,?,?,?,0)')
+        .run(
+          siloPayload.jti,
+          file.id,
+          siloPayload.exp,
+          Date.now()
+        );
+
+      const siloStream = {
+        name: 'Silo Transcode',
+        title:
+          `Silo • ${settings.siloTranscodeQuality} • H.264 • AAC`,
+        description:
+          'Server-transcoded HLS via Silo',
+        url:
+          `${settings.baseUrl}/silo-stream/${encodeURIComponent(siloToken)}`,
+        subtitles: subtitles.map((subtitle) => ({
+          id: subtitle.id,
+          lang: subtitle.language || 'und',
+          url:
+            `${settings.baseUrl}/subtitles/${encodeURIComponent(siloToken)}/${encodeURIComponent(subtitle.id)}`
+        })),
+        behaviorHints: {
+          bingeGroup:
+            `nuvi-flow:${file.media_item_id}`,
+          filename:
+            path.basename(file.relative_path),
+          videoSize: file.size
+        }
+      };
+
+      return [
+        directStream,
+        siloStream
+      ];
     });
     reply.header('Cache-Control', 'no-store').send({ streams });
   });

@@ -5,8 +5,18 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import type { AppConfig } from '../config.js';
 import type { AppDatabase } from '../db/index.js';
 import { parseByteRange } from '../lib/range.js';
-import { verifyStreamToken } from '../lib/security.js';
-import type { ExternalSubtitleRow, MediaFileRow } from '../types.js';
+import {
+  createSiloMediaToken,
+  verifySiloMediaToken,
+  verifyStreamToken
+} from '../lib/security.js';
+import { SiloClient } from '../services/silo.js';
+import type { SettingsService } from '../services/settings.js';
+import type {
+  ExternalSubtitleRow,
+  MediaFileRow,
+  MediaItemRow
+} from '../types.js';
 
 function contentDisposition(name: string): string {
   const safe = name.replace(/["\r\n\\/]/g, '_');
@@ -66,10 +76,348 @@ async function serveMedia(request: FastifyRequest, reply: FastifyReply, database
   return reply.send(stream);
 }
 
-export function registerMediaRoutes(app: FastifyInstance, database: AppDatabase, config: AppConfig): void {
+async function serveSiloStream(
+  request: FastifyRequest,
+  reply: FastifyReply,
+  database: AppDatabase,
+  settings: SettingsService,
+  config: AppConfig
+): Promise<FastifyReply> {
+  const authorized = authorize(
+    request,
+    database,
+    config
+  );
+
+  if (!authorized) {
+    return reply
+      .code(401)
+      .header('Cache-Control', 'no-store')
+      .send({
+        error:
+          'Invalid or expired stream token'
+      });
+  }
+
+  if (
+    !settings.siloEnabled ||
+    !settings.siloUrl ||
+    !settings.siloApiKey ||
+    !settings.siloProfileId
+  ) {
+    return reply
+      .code(503)
+      .header('Cache-Control', 'no-store')
+      .send({
+        error: 'Silo is not configured.'
+      });
+  }
+
+  const item = database.sqlite
+    .prepare(
+      'SELECT * FROM media_items WHERE id=?'
+    )
+    .get(
+      authorized.file.media_item_id
+    ) as MediaItemRow | undefined;
+
+  if (!item) {
+    return reply
+      .code(404)
+      .header('Cache-Control', 'no-store')
+      .send({
+        error: 'Media item not found.'
+      });
+  }
+
+  let episode:
+    | {
+        season: number;
+        episode: number;
+      }
+    | undefined;
+
+  if (item.type === 'series') {
+    const season =
+      authorized.token?.season;
+
+    const episodeNumber =
+      authorized.token?.episode;
+
+    if (
+      season === undefined ||
+      episodeNumber === undefined
+    ) {
+      return reply
+        .code(400)
+        .header('Cache-Control', 'no-store')
+        .send({
+          error:
+            'Episode context is required for Silo TV playback.'
+        });
+    }
+
+    episode = {
+      season,
+      episode: episodeNumber
+    };
+  }
+
+  const silo = new SiloClient(
+    settings.siloUrl,
+    settings.siloApiKey
+  );
+
+  const fileId = await silo.resolveFileId(
+    item,
+    authorized.file,
+    episode
+  );
+
+  if (fileId === null) {
+    return reply
+      .code(404)
+      .header('Cache-Control', 'no-store')
+      .send({
+        error:
+          'This file could not be resolved in Silo.'
+      });
+  }
+
+  const decision =
+    await silo.startPlayback(
+      fileId,
+      settings.siloProfileId,
+      settings.siloTranscodeQuality
+    );
+
+  const plan = decision.playback_plan;
+
+  if (
+    decision.outcome !== 'playable' ||
+    !plan ||
+    plan.delivery !==
+      'server_transcode_hls' ||
+    plan.stream.protocol !== 'hls' ||
+    !plan.stream.url.startsWith(
+      '/playback/'
+    )
+  ) {
+    return reply
+      .code(502)
+      .header('Cache-Control', 'no-store')
+      .send({
+        error:
+          'Silo did not return a usable transcoded HLS stream.'
+      });
+  }
+
+  const siloPath =
+    '/api/v1' + plan.stream.url;
+
+  const { token } =
+    createSiloMediaToken(
+      siloPath,
+      authorized.token!.exp,
+      config.streamSecret
+    );
+
+  return reply
+    .code(302)
+    .header(
+      'Location',
+      '/silo-media/' +
+        encodeURIComponent(token)
+    )
+    .header('Cache-Control', 'no-store')
+    .send();
+}
+
+async function serveSiloMedia(
+  request: FastifyRequest,
+  reply: FastifyReply,
+  settings: SettingsService,
+  config: AppConfig
+): Promise<FastifyReply> {
+  const { token } =
+    request.params as { token: string };
+
+  const payload = verifySiloMediaToken(
+    token,
+    config.streamSecret
+  );
+
+  if (!payload) {
+    return reply
+      .code(401)
+      .header('Cache-Control', 'no-store')
+      .send({
+        error:
+          'Invalid or expired Silo media token'
+      });
+  }
+
+  if (
+    !settings.siloEnabled ||
+    !settings.siloUrl ||
+    !settings.siloApiKey
+  ) {
+    return reply
+      .code(503)
+      .header('Cache-Control', 'no-store')
+      .send({
+        error: 'Silo is not configured.'
+      });
+  }
+
+  const silo = new SiloClient(
+    settings.siloUrl,
+    settings.siloApiKey
+  );
+
+  const response = await silo.fetchMedia(
+    payload.path,
+    {
+      headers: request.headers.accept
+        ? {
+            Accept:
+              request.headers.accept
+          }
+        : undefined
+    }
+  );
+
+  if (!response.ok) {
+    await response.body?.cancel();
+
+    return reply
+      .code(
+        response.status === 404
+          ? 404
+          : 502
+      )
+      .header('Cache-Control', 'no-store')
+      .send({
+        error:
+          'Silo media could not be fetched.'
+      });
+  }
+
+  let contentType =
+    response.headers.get('content-type') ||
+    'application/octet-stream';
+
+  if (payload.path.endsWith('.m3u8')) {
+    contentType =
+      'application/vnd.apple.mpegurl';
+  } else if (payload.path.endsWith('.ts')) {
+    contentType = 'video/mp2t';
+  }
+
+  let body: Buffer;
+
+  if (payload.path.endsWith('.m3u8')) {
+    const manifest =
+      await response.text();
+
+    const sourceUrl = new URL(
+      payload.path,
+      'http://silo.internal'
+    );
+
+    const rewritten = manifest
+      .split('\n')
+      .map(line => {
+        const trimmed = line.trim();
+
+        if (
+          !trimmed ||
+          trimmed.startsWith('#')
+        ) {
+          return line;
+        }
+
+        const resolved = new URL(
+          trimmed,
+          sourceUrl
+        );
+
+        const siloPath =
+          resolved.pathname +
+          resolved.search;
+
+        if (
+          !siloPath.startsWith(
+            '/api/v1/playback/'
+          )
+        ) {
+          return line;
+        }
+
+        const { token } =
+          createSiloMediaToken(
+            siloPath,
+            payload.exp,
+            config.streamSecret
+          );
+
+        return (
+          '/silo-media/' +
+          encodeURIComponent(token)
+        );
+      })
+      .join('\n');
+
+    body = Buffer.from(rewritten);
+  } else {
+    body = Buffer.from(
+      await response.arrayBuffer()
+    );
+  }
+
+  return reply
+    .code(200)
+    .header('Content-Type', contentType)
+    .header('Content-Length', String(body.length))
+    .header('Cache-Control', 'private, no-store')
+    .header('X-Content-Type-Options', 'nosniff')
+    .send(body);
+}
+
+export function registerMediaRoutes(
+  app: FastifyInstance,
+  database: AppDatabase,
+  config: AppConfig,
+  settings: SettingsService
+): void {
   const options = { config: { rateLimit: { max: 1200, timeWindow: '1 minute' } } };
   app.get('/media/:token', options, (request, reply) => serveMedia(request, reply, database, config));
   app.head('/media/:token', options, (request, reply) => serveMedia(request, reply, database, config));
+
+  app.get(
+    '/silo-stream/:token',
+    options,
+    (request, reply) =>
+      serveSiloStream(
+        request,
+        reply,
+        database,
+        settings,
+        config
+      )
+  );
+
+  app.get(
+    '/silo-media/:token',
+    options,
+    (request, reply) =>
+      serveSiloMedia(
+        request,
+        reply,
+        settings,
+        config
+      )
+  );
   app.get('/subtitles/:token/:subtitleId', { config: { rateLimit: { max: 600, timeWindow: '1 minute' } } }, async (request, reply) => {
     const authorized = authorize(request, database, config);
     if (!authorized) return reply.code(401).send({ error: 'Invalid or expired stream token' });
