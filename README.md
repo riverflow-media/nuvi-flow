@@ -18,7 +18,7 @@ Nuvi-Flow is based on [Squipy411/personal-media-addon](https://github.com/Squipy
 - HTTP byte-range support for seeking
 - External subtitle support
 - Signed media URLs
-- No transcoding
+- Optional Silo-backed HLS transcoding
 - No media-file modifications
 - Searchable movie and series catalogs
 - Recently added catalogs
@@ -31,6 +31,25 @@ Nuvi-Flow is based on [Squipy411/personal-media-addon](https://github.com/Squipy
 Nuvi-Flow supports media files exposed through symlinks, making it suitable for setups using rclone, InfiniDysk, or other virtual/remote media mounts.
 
 Symlinked media files are followed and scanned while the configured media directories can remain read-only.
+
+### Silo playback
+
+Nuvi-Flow can use a separate [Silo](https://github.com/Silo-Server/silo-server) server for authenticated HLS transcoding while keeping Silo credentials and internal container addresses away from Nuvio/Stremio clients.
+
+The current integration provides:
+
+- Original-file direct playback as the first stream option
+- An optional fixed-quality Silo HLS stream
+- Exact-path matching between Nuvi-Flow media files and Silo files
+- Signed Nuvi-Flow URLs for Silo manifests and segments
+- Server-side Silo authentication
+- Concurrent playback-start coalescing
+- Short-lived reuse of active Silo sessions, preventing repeated client requests from starting overlapping FFmpeg jobs
+- A unique Nuvi-Flow playback ID in structured session logs and the `X-Nuvi-Flow-Playback-Id` response header
+
+Automatic per-device direct-play, remux, audio-only transcode, HDR, and quality fallback decisions are planned but are not part of the current fixed-quality integration.
+
+For exact-path matching to work, the same media file must have the same container path in Nuvi-Flow and Silo. For example, mount the library as `/media/movies` in both containers rather than `/media/movies` in one and `/movies` in the other.
 
 ### Automatic Radarr and Sonarr requests
 
@@ -141,6 +160,8 @@ The password-protected dashboard provides:
 - Failed-request retries
 - Radarr connection testing
 - Sonarr connection testing
+- Silo connection and profile testing
+- Silo transcode-quality selection
 - Root-folder selection
 - Quality-profile selection
 - Requested-episode or whole-series Sonarr monitoring
@@ -167,6 +188,8 @@ Edit `.env`, then start Nuvi-Flow:
 docker compose up -d --build
 docker compose ps
 ```
+
+The container is ready when its status becomes `healthy` and the `/health` endpoint returns `{"status":"ok"}`.
 
 Default endpoints:
 
@@ -212,6 +235,8 @@ Example:
 ```bash
 docker pull ghcr.io/riverflow-media/nuvi-flow:latest
 ```
+
+Each successful default-branch build publishes both `latest` and an immutable `sha-<commit>` tag. The image is published only after the automated test suite, typecheck, production build, Docker build, container startup, and Docker health check pass.
 
 ## Add Nuvi-Flow to Nuvio
 
@@ -332,8 +357,13 @@ Common environment variables include:
 | `SCAN_CONCURRENCY` | Concurrent scan work |
 | `WATCH_MEDIA` | Watch media directories for changes |
 | `SCAN_ON_STARTUP` | Scan after startup |
+| `SILO_ENABLED` | Enable optional Silo playback |
+| `SILO_URL` | Internal Silo base URL, such as `http://silo:8080` |
+| `SILO_API_KEY` | Silo API key; never returned to the browser |
+| `SILO_PROFILE_ID` | Silo playback profile ID |
+| `SILO_TRANSCODE_QUALITY` | Fixed Silo quality rung used by the current integration |
 
-Radarr, Sonarr, Anime root/profile selections, addon branding, and other runtime settings can be managed from the admin dashboard.
+Radarr, Sonarr, Silo, Anime root/profile selections, addon branding, and other runtime settings can be managed from the admin dashboard.
 
 ## Development
 

@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, riverflow-v1.1.1]
   pull_request:
 
 permissions:

@@ -17,6 +17,7 @@ import { registerAdminRoutes } from './routes/admin.js';
 import { registerMediaRoutes } from './routes/media.js';
 import { registerStremioRoutes } from './routes/stremio.js';
 import { MediaScanner } from './services/scanner.js';
+import { PlaybackSessionRegistry } from './services/playback/playback-sessions.js';
 import { RequestService } from './services/requester.js';
 import { SettingsService } from './services/settings.js';
 import { TmdbService } from './services/tmdb.js';
@@ -28,6 +29,7 @@ export interface BuiltApp {
   scanner: MediaScanner;
   tmdb: TmdbService;
   requester: RequestService;
+  playbackSessions: PlaybackSessionRegistry;
 }
 
 export async function buildApp(config: AppConfig): Promise<BuiltApp> {
@@ -50,6 +52,12 @@ export async function buildApp(config: AppConfig): Promise<BuiltApp> {
   await app.register(rateLimit, { global: false, keyGenerator: (request) => request.ip });
   const database = new AppDatabase(config.databasePath);
   const settings = new SettingsService(database, config);
+  const playbackSessions =
+    new PlaybackSessionRegistry();
+
+  app.addHook('onClose', async () => {
+    playbackSessions.close();
+  });
   if (!settings.adminPasswordHash) settings.set('adminPasswordHash', await hashPassword(config.adminPassword));
 
   app.get('/addon-icon', {
@@ -153,7 +161,8 @@ export async function buildApp(config: AppConfig): Promise<BuiltApp> {
     app,
     database,
     config,
-    settings
+    settings,
+    playbackSessions
   );
   registerAdminRoutes(app, database, settings, scanner, tmdb, requester, config);
   app.setNotFoundHandler(async (_request, reply) => reply.code(404).send({ error: 'Not found' }));
@@ -163,5 +172,13 @@ export async function buildApp(config: AppConfig): Promise<BuiltApp> {
     const statusCode = candidate.statusCode && candidate.statusCode < 500 ? candidate.statusCode : 500;
     if (!reply.sent) reply.code(statusCode).send({ error: statusCode < 500 ? candidate.message || 'Invalid request' : 'The request could not be completed.' });
   });
-  return { app, database, settings, scanner, tmdb, requester };
+  return {
+    app,
+    database,
+    settings,
+    scanner,
+    tmdb,
+    requester,
+    playbackSessions
+  };
 }

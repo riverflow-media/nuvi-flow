@@ -288,6 +288,147 @@ describe('Stremio and media HTTP endpoints', () => {
     );
   });
 
+  it('coalesces simultaneous Silo playback requests and reuses the session', async () => {
+    built.settings.set(
+      'siloProfileId',
+      'profile-1'
+    );
+
+    const fetchMock = vi.fn().mockImplementation(
+      async (url: string) => {
+        if (
+          url.endsWith(
+            '/api/v1/catalog/items/movie-tmdb-123/versions'
+          )
+        ) {
+          return new Response(
+            JSON.stringify([
+              {
+                file_id: 120,
+                file_path: mediaPath
+              }
+            ]),
+            {
+              status: 200,
+              headers: {
+                'Content-Type':
+                  'application/json'
+              }
+            }
+          );
+        }
+
+        if (
+          url.endsWith(
+            '/api/v1/playback/start'
+          )
+        ) {
+          await new Promise(resolve =>
+            setTimeout(resolve, 20)
+          );
+
+          return new Response(
+            JSON.stringify({
+              protocol_version: 3,
+              server_features: [
+                'playback_plan_v3'
+              ],
+              outcome: 'playable',
+              session_id: 'shared-session',
+              playback_plan: {
+                delivery:
+                  'server_transcode_hls',
+                stream: {
+                  url:
+                    '/playback/transcode/shared-session/master.m3u8',
+                  protocol: 'hls',
+                  headers: {},
+                  header_refresh: 'none'
+                }
+              }
+            }),
+            {
+              status: 201,
+              headers: {
+                'Content-Type':
+                  'application/json'
+              }
+            }
+          );
+        }
+
+        return new Response(null, {
+          status: 404
+        });
+      }
+    );
+
+    vi.stubGlobal('fetch', fetchMock);
+
+    const streamToken = token();
+    const streamUrl =
+      `/silo-stream/${encodeURIComponent(streamToken)}`;
+
+    const [first, second] = await Promise.all([
+      built.app.inject({
+        method: 'GET',
+        url: streamUrl,
+        headers: {
+          'user-agent': 'Nuvio Test Client'
+        }
+      }),
+      built.app.inject({
+        method: 'GET',
+        url: streamUrl,
+        headers: {
+          'user-agent': 'Nuvio Test Client'
+        }
+      })
+    ]);
+
+    expect(first.statusCode).toBe(302);
+    expect(second.statusCode).toBe(302);
+    expect(first.headers.location).toBe(
+      second.headers.location
+    );
+    expect(
+      first.headers['x-nuvi-flow-playback-id']
+    ).toBe(
+      second.headers['x-nuvi-flow-playback-id']
+    );
+
+    const versionRequests = fetchMock.mock.calls
+      .filter(([url]) => String(url).endsWith(
+        '/api/v1/catalog/items/movie-tmdb-123/versions'
+      ));
+    const startRequests = fetchMock.mock.calls
+      .filter(([url]) => String(url).endsWith(
+        '/api/v1/playback/start'
+      ));
+
+    expect(versionRequests).toHaveLength(1);
+    expect(startRequests).toHaveLength(1);
+
+    const reused = await built.app.inject({
+      method: 'GET',
+      url: streamUrl,
+      headers: {
+        'user-agent': 'Nuvio Test Client'
+      }
+    });
+
+    expect(reused.statusCode).toBe(302);
+    expect(reused.headers.location).toBe(
+      first.headers.location
+    );
+    expect(
+      reused.headers['x-nuvi-flow-playback-id']
+    ).toBe(
+      first.headers['x-nuvi-flow-playback-id']
+    );
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
   it('rewrites Silo HLS segment URLs through the signed proxy', async () => {
     const fetchMock = vi.fn().mockImplementation(
       async (url: string) => {

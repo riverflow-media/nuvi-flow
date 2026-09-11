@@ -11,7 +11,63 @@ permissions:
   packages: write
 
 jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm test
+      - run: npm run typecheck
+      - run: npm run build
+      - name: Build deployment image
+        run: |
+          docker build \
+            --build-arg VERSION=${{ github.ref_name }} \
+            --build-arg REVISION=${{ github.sha }} \
+            --build-arg SOURCE_URL=https://github.com/${{ github.repository }} \
+            -t nuvi-flow:deployment-test \
+            .
+      - name: Verify container health
+        run: |
+          test_container="nuvi-flow-ci-${{ github.run_id }}"
+          test_volume="nuvi-flow-ci-data-${{ github.run_id }}"
+          cleanup() {
+            docker rm -f "$test_container" >/dev/null 2>&1 || true
+            docker volume rm "$test_volume" >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+          docker volume create "$test_volume"
+          docker run -d \
+            --name "$test_container" \
+            --read-only \
+            --tmpfs /tmp:size=256m,mode=1777 \
+            -v "$test_volume:/app/data" \
+            -e ADMIN_PASSWORD=ci-test-password \
+            -e SESSION_SECRET=ci-session-secret-at-least-32-characters \
+            -e STREAM_SECRET=ci-stream-secret-at-least-32-characters \
+            -e SCAN_ON_STARTUP=false \
+            -e WATCH_MEDIA=false \
+            nuvi-flow:deployment-test
+          for attempt in $(seq 1 45); do
+            health="$(docker inspect --format '{{.State.Health.Status}}' "$test_container")"
+            if [ "$health" = healthy ]; then
+              exit 0
+            fi
+            if [ "$health" = unhealthy ]; then
+              docker logs "$test_container"
+              exit 1
+            fi
+            sleep 2
+          done
+          docker logs "$test_container"
+          exit 1
+
   publish:
+    needs: validate
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6

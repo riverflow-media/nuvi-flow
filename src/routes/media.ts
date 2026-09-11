@@ -10,6 +10,11 @@ import {
   verifySiloMediaToken,
   verifyStreamToken
 } from '../lib/security.js';
+import {
+  provisionalDeviceId,
+  type PlaybackSessionRegistry,
+  type PlaybackSessionResult
+} from '../services/playback/playback-sessions.js';
 import { SiloClient } from '../services/silo.js';
 import type { SettingsService } from '../services/settings.js';
 import type {
@@ -21,6 +26,27 @@ import type {
 function contentDisposition(name: string): string {
   const safe = name.replace(/["\r\n\\/]/g, '_');
   return `inline; filename="${safe}"`;
+}
+
+function headerValue(
+  request: FastifyRequest,
+  name: string
+): string | undefined {
+  const value = request.headers[name];
+
+  return Array.isArray(value)
+    ? value[0]
+    : value;
+}
+
+class SiloPlaybackRouteError extends Error {
+  constructor(
+    public readonly statusCode: number,
+    message: string
+  ) {
+    super(message);
+    this.name = 'SiloPlaybackRouteError';
+  }
 }
 
 function authorize(request: FastifyRequest, database: AppDatabase, config: AppConfig): { file: MediaFileRow; token: ReturnType<typeof verifyStreamToken> } | null {
@@ -81,7 +107,8 @@ async function serveSiloStream(
   reply: FastifyReply,
   database: AppDatabase,
   settings: SettingsService,
-  config: AppConfig
+  config: AppConfig,
+  playbackSessions: PlaybackSessionRegistry
 ): Promise<FastifyReply> {
   const authorized = authorize(
     request,
@@ -163,61 +190,147 @@ async function serveSiloStream(
     };
   }
 
-  const silo = new SiloClient(
-    settings.siloUrl,
-    settings.siloApiKey
-  );
+  const deviceId = provisionalDeviceId({
+    explicitDeviceId:
+      headerValue(
+        request,
+        'x-nuvi-flow-device-id'
+      ) ||
+      headerValue(
+        request,
+        'x-stremio-device-id'
+      ),
+    clientName:
+      headerValue(request, 'x-stremio-client'),
+    clientVersion:
+      headerValue(request, 'x-stremio-version'),
+    userAgent:
+      headerValue(request, 'user-agent'),
+    ip: request.ip,
+    streamTokenId: authorized.token!.jti
+  });
 
-  const fileId = await silo.resolveFileId(
-    item,
-    authorized.file,
-    episode
-  );
+  let sessionResult: PlaybackSessionResult;
 
-  if (fileId === null) {
-    return reply
-      .code(404)
-      .header('Cache-Control', 'no-store')
-      .send({
-        error:
-          'This file could not be resolved in Silo.'
-      });
+  try {
+    sessionResult =
+      await playbackSessions.getOrCreate(
+        {
+          deviceId,
+          mediaFileId: authorized.file.id,
+          profileId: settings.siloProfileId,
+          mode: 'fixed-silo-hls',
+          quality:
+            settings.siloTranscodeQuality,
+          audioSelection: 'default',
+          subtitleSelection: 'none',
+          dynamicRangeMode: 'sdr',
+          season: episode?.season,
+          episode: episode?.episode
+        },
+        authorized.token!.exp,
+        async ({ playbackId }) => {
+          const startupStartedAt = Date.now();
+          const silo = new SiloClient(
+            settings.siloUrl,
+            settings.siloApiKey
+          );
+
+          const fileId = await silo.resolveFileId(
+            item,
+            authorized.file,
+            episode
+          );
+
+          if (fileId === null) {
+            throw new SiloPlaybackRouteError(
+              404,
+              'This file could not be resolved in Silo.'
+            );
+          }
+
+          const decision =
+            await silo.startPlayback(
+              fileId,
+              settings.siloProfileId,
+              settings.siloTranscodeQuality
+            );
+
+          const plan = decision.playback_plan;
+
+          if (
+            decision.outcome !== 'playable' ||
+            !plan ||
+            plan.delivery !==
+              'server_transcode_hls' ||
+            plan.stream.protocol !== 'hls' ||
+            !plan.stream.url.startsWith(
+              '/playback/'
+            )
+          ) {
+            throw new SiloPlaybackRouteError(
+              502,
+              'Silo did not return a usable transcoded HLS stream.'
+            );
+          }
+
+          request.log.info(
+            {
+              playback_id: playbackId,
+              device_id: deviceId,
+              media_file_id: authorized.file.id,
+              silo_file_id: fileId,
+              silo_session_id:
+                decision.session_id || null,
+              source: {
+                width: authorized.file.width,
+                height: authorized.file.height,
+                video_codec:
+                  authorized.file.video_codec,
+                audio_codec:
+                  authorized.file.audio_codec
+              },
+              decision: plan.delivery,
+              target: {
+                quality:
+                  settings.siloTranscodeQuality,
+                video_codec: 'h264',
+                audio_codec: 'aac',
+                dynamic_range: 'sdr'
+              },
+              reason:
+                'configured_silo_transcode',
+              startup_ms:
+                Date.now() - startupStartedAt,
+              fallback_attempt: 0
+            },
+            'Playback session created'
+          );
+
+          return {
+            siloSessionId:
+              decision.session_id || null,
+            siloFileId: fileId,
+            upstreamPath:
+              '/api/v1' + plan.stream.url,
+            delivery: plan.delivery
+          };
+        }
+      );
+  } catch (error) {
+    if (error instanceof SiloPlaybackRouteError) {
+      return reply
+        .code(error.statusCode)
+        .header('Cache-Control', 'no-store')
+        .send({ error: error.message });
+    }
+
+    throw error;
   }
-
-  const decision =
-    await silo.startPlayback(
-      fileId,
-      settings.siloProfileId,
-      settings.siloTranscodeQuality
-    );
-
-  const plan = decision.playback_plan;
-
-  if (
-    decision.outcome !== 'playable' ||
-    !plan ||
-    plan.delivery !==
-      'server_transcode_hls' ||
-    plan.stream.protocol !== 'hls' ||
-    !plan.stream.url.startsWith(
-      '/playback/'
-    )
-  ) {
-    return reply
-      .code(502)
-      .header('Cache-Control', 'no-store')
-      .send({
-        error:
-          'Silo did not return a usable transcoded HLS stream.'
-      });
-  }
-
-  const siloPath =
-    '/api/v1' + plan.stream.url;
 
   const { token } =
     createSiloMediaToken(
-      siloPath,
+      sessionResult.session.upstreamPath,
       authorized.token!.exp,
       config.streamSecret
     );
@@ -228,6 +341,10 @@ async function serveSiloStream(
       'Location',
       '/silo-media/' +
         encodeURIComponent(token)
+    )
+    .header(
+      'X-Nuvi-Flow-Playback-Id',
+      sessionResult.session.playbackId
     )
     .header('Cache-Control', 'no-store')
     .send();
@@ -388,7 +505,8 @@ export function registerMediaRoutes(
   app: FastifyInstance,
   database: AppDatabase,
   config: AppConfig,
-  settings: SettingsService
+  settings: SettingsService,
+  playbackSessions: PlaybackSessionRegistry
 ): void {
   const options = { config: { rateLimit: { max: 1200, timeWindow: '1 minute' } } };
   app.get('/media/:token', options, (request, reply) => serveMedia(request, reply, database, config));
@@ -403,7 +521,8 @@ export function registerMediaRoutes(
         reply,
         database,
         settings,
-        config
+        config,
+        playbackSessions
       )
   );
 
