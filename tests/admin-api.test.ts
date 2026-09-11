@@ -80,6 +80,47 @@ describe('admin media detail API', () => {
     })).statusCode).toBe(200);
   });
 
+  it('tests Silo through the application Silo service', async () => {
+    const testConnection = vi.spyOn(built.silo, 'testConnection')
+      .mockResolvedValue({
+        health: {
+          status: 'ok',
+          server_name: 'Test Silo',
+          server_id: 'silo-test'
+        },
+        profiles: [{
+          id: 'profile-1',
+          name: 'Default',
+          primary: true
+        }]
+      });
+
+    const response = await request(
+      'POST',
+      '/admin/api/integrations/silo/test',
+      {
+        url: 'http://silo:8080/',
+        apiKey: 'test-silo-key'
+      }
+    );
+
+    expect(response.statusCode).toBe(200);
+    expect(testConnection).toHaveBeenCalledWith(
+      'http://silo:8080',
+      'test-silo-key'
+    );
+    expect(response.json()).toMatchObject({
+      ok: true,
+      service: 'silo',
+      instanceName: 'Test Silo',
+      profiles: [{
+        id: 'profile-1',
+        name: 'Default',
+        primary: true
+      }]
+    });
+  });
+
   it('returns coherent current-match details and updates action state', async () => {
     const details = await request('GET', '/admin/api/files/file1');
     expect(details.statusCode).toBe(200);

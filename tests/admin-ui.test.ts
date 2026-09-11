@@ -2,14 +2,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { adminCss, adminHtml, adminJs } from '../src/admin/assets.js';
 
-const longPath = 'Solar Opposites/Solar Opposites (2020) {tvdb-375892}/Season 06/Solar Opposites (2020) - S06E10 - What is the Mission Anyway [WEBDL-1080p][EAC3 5.1][h265]-NTb.mkv';
+const longPath = 'Example Series/Example Series (2020) {tvdb-100001}/Season 06/Example Series (2020) - S06E10 - Example Episode [WEBDL-1080p][EAC3 5.1][h265]-TEST.mkv';
 
 function mediaFile(overrides: Record<string, unknown> = {}) {
   return {
     id: 'file1', libraryType: 'series', relativePath: longPath, size: 123456, durationSeconds: 1468,
     bitrate: 8_500_000, videoCodec: 'hevc', audioCodec: 'eac3', width: 1920, height: 1080,
     audioChannels: 6, audioLanguages: ['eng'], subtitleTracks: [{ language: 'eng', codec: 'subrip' }],
-    parsedTitle: 'Solar Opposites', parsedYear: 2020, quality: '1080p', confidence: null,
+    parsedTitle: 'Example Series', parsedYear: 2020, quality: '1080p', confidence: null,
     status: 'unmatched', stremioId: null, mediaItemId: null, currentMatch: null, subtitles: [],
     probe: { streams: [{ codec_type: 'video', color_transfer: 'smpte2084', very_long_value: 'x'.repeat(1000) }] },
     ...overrides
@@ -104,6 +104,10 @@ describe('media details modal', () => {
     await flush();
     expect(document.querySelector('#buildVersion')?.textContent)
       .toBe('v1.1.1 · abc123def456');
+    expect(document.querySelector('.sidebar-foot .server-state #buildVersion'))
+      .not.toBeNull();
+    expect(document.querySelector('.topbar #buildVersion'))
+      .toBeNull();
     expect((document.querySelector('#manifestUrl') as HTMLInputElement).value)
       .toBe('http://localhost:60500/addon/test-secure-install-token/manifest.json');
   });
@@ -276,8 +280,8 @@ describe('media details modal', () => {
   it('ignores an older polling response that arrives after newer library state', async () => {
     const staleFile = mediaFile();
     const freshFile = mediaFile({
-      status: 'matched', confidence: 1, mediaItemId: 'item1', stremioId: 'tt8910922',
-      currentMatch: { title: 'Solar Opposites', year: 2020, tmdbId: 97645, stremioId: 'tt8910922', description: null, poster: null }
+      status: 'matched', confidence: 1, mediaItemId: 'item1', stremioId: 'tt1000001',
+      currentMatch: { title: 'Example Series', year: 2020, tmdbId: 100001, stremioId: 'tt1000001', description: null, poster: null }
     });
     let stateCall = 0;
     let resolveStale!: (value: Response) => void;
@@ -315,11 +319,11 @@ describe('media details modal', () => {
         return json(appState([file]));
       }
       if (url === '/admin/api/files/file1') return json({ file });
-      if (url.startsWith('/admin/api/tmdb/search')) return json({ results: [{ id: 123, title: 'Solar Opposites', year: 2020, confidence: .98 }] });
+      if (url.startsWith('/admin/api/tmdb/search')) return json({ results: [{ id: 123, title: 'Example Series', year: 2020, confidence: .98 }] });
       if (url === '/admin/api/files/file1/match' && init?.method === 'POST') {
         file = mediaFile({
-          status: 'matched', confidence: 1, mediaItemId: 'item1', stremioId: 'tt8910922',
-          currentMatch: { title: 'Solar Opposites', year: 2020, tmdbId: 97645, stremioId: 'tt8910922', description: null, poster: null }
+          status: 'matched', confidence: 1, mediaItemId: 'item1', stremioId: 'tt1000001',
+          currentMatch: { title: 'Example Series', year: 2020, tmdbId: 100001, stremioId: 'tt1000001', description: null, poster: null }
         });
         failNextState = true;
         return json({ ok: true, file });
@@ -346,11 +350,11 @@ describe('media details modal', () => {
       const url = String(input);
       if (url === '/admin/api/state') return json(appState([file]));
       if (url === '/admin/api/files/file1') return json({ file });
-      if (url.startsWith('/admin/api/tmdb/search')) return json({ results: [{ id: 123, title: 'Solar Opposites', year: 2020, overview: 'A family of aliens tries to fit in.', confidence: .98 }] });
+      if (url.startsWith('/admin/api/tmdb/search')) return json({ results: [{ id: 123, title: 'Example Series', year: 2020, overview: 'A fictional series used for automated testing.', confidence: .98 }] });
       if (url === '/admin/api/files/file1/match' && init?.method === 'POST') {
         file = mediaFile({
-          status: 'matched', confidence: 1, mediaItemId: 'item1', stremioId: 'tt8910922',
-          currentMatch: { title: 'Solar Opposites', year: 2020, tmdbId: 97645, stremioId: 'tt8910922', description: 'A family of aliens tries to fit in.', poster: null }
+          status: 'matched', confidence: 1, mediaItemId: 'item1', stremioId: 'tt1000001',
+          currentMatch: { title: 'Example Series', year: 2020, tmdbId: 100001, stremioId: 'tt1000001', description: 'A fictional series used for automated testing.', poster: null }
         });
         return json({ ok: true, file });
       }

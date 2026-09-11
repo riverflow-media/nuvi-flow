@@ -20,6 +20,7 @@ import { registerStremioRoutes } from './routes/stremio.js';
 import { MediaScanner } from './services/scanner.js';
 import { PlaybackSessionRegistry } from './services/playback/playback-sessions.js';
 import { RequestService } from './services/requester.js';
+import { SiloService } from './services/silo-service.js';
 import { SettingsService } from './services/settings.js';
 import { TmdbService } from './services/tmdb.js';
 
@@ -30,6 +31,7 @@ export interface BuiltApp {
   scanner: MediaScanner;
   tmdb: TmdbService;
   requester: RequestService;
+  silo: SiloService;
   playbackSessions: PlaybackSessionRegistry;
 }
 
@@ -66,6 +68,7 @@ export async function buildApp(config: AppConfig): Promise<BuiltApp> {
   await app.register(rateLimit, { global: false, keyGenerator: (request) => request.ip });
   const database = new AppDatabase(config.databasePath);
   const settings = new SettingsService(database, config);
+  const silo = new SiloService(settings);
   const playbackSessions =
     new PlaybackSessionRegistry();
 
@@ -176,9 +179,10 @@ export async function buildApp(config: AppConfig): Promise<BuiltApp> {
     database,
     config,
     settings,
-    playbackSessions
+    playbackSessions,
+    silo
   );
-  registerAdminRoutes(app, database, settings, scanner, tmdb, requester, config);
+  registerAdminRoutes(app, database, settings, scanner, tmdb, requester, config, silo);
   app.setNotFoundHandler(async (_request, reply) => reply.code(404).send({ error: 'Not found' }));
   app.setErrorHandler(async (error, request, reply) => {
     request.log.error({ err: error }, 'Request failed');
@@ -193,6 +197,7 @@ export async function buildApp(config: AppConfig): Promise<BuiltApp> {
     scanner,
     tmdb,
     requester,
+    silo,
     playbackSessions
   };
 }

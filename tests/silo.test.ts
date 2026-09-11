@@ -13,6 +13,7 @@ import {
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  vi.unstubAllEnvs();
 });
 
 describe('Silo integration', () => {
@@ -32,7 +33,7 @@ describe('Silo integration', () => {
           tmdb_id: 615,
           metadata_json: JSON.stringify({
             external_ids: {
-              tvdb_id: 73871
+              tvdb_id: 100001
             }
           })
         },
@@ -42,7 +43,7 @@ describe('Silo integration', () => {
         }
       )
     ).toBe(
-      'episode-tvdb-73871-1-1'
+      'episode-tvdb-100001-1-1'
     );
   });
 
@@ -53,7 +54,7 @@ describe('Silo integration', () => {
           {
             file_id: 149,
             file_path:
-              '/mnt/media/tv/Futurama/Season 01/test.mkv'
+              '/test-library/series/Example Series/Season 01/Episode 01.mkv'
           }
         ]),
         {
@@ -80,13 +81,13 @@ describe('Silo integration', () => {
           tmdb_id: 615,
           metadata_json: JSON.stringify({
             external_ids: {
-              tvdb_id: 73871
+              tvdb_id: 100001
             }
           })
         },
         {
           absolute_path:
-            '/mnt/media/tv/Futurama/Season 01/test.mkv'
+            '/test-library/series/Example Series/Season 01/Episode 01.mkv'
         },
         {
           season: 1,
@@ -97,12 +98,13 @@ describe('Silo integration', () => {
     expect(fileId).toBe(149);
 
     expect(fetchMock).toHaveBeenCalledWith(
-      'http://silo:8080/api/v1/catalog/items/episode-tvdb-73871-1-1/versions',
+      'http://silo:8080/api/v1/catalog/items/episode-tvdb-100001-1-1/versions',
       expect.any(Object)
     );
   });
 
   it('starts Silo v3 HLS playback without exposing the API key', async () => {
+    vi.stubEnv('NUVI_FLOW_VERSION', '1.2.3-test');
     const fetchMock = vi.fn().mockResolvedValue(
       new Response(
         JSON.stringify({
@@ -194,6 +196,14 @@ describe('Silo integration', () => {
       headers.get('Content-Type')
     ).toBe('application/json');
 
+    expect(
+      headers.get('X-Silo-Client')
+    ).toBe('Nuvi-Flow');
+
+    expect(
+      headers.get('X-Silo-Client-Version')
+    ).toBe('1.2.3-test');
+
     const body = JSON.parse(
       String(init.body)
     );
@@ -214,6 +224,7 @@ describe('Silo integration', () => {
         hdr: false
       },
       client_playback_context: {
+        app_version: '1.2.3-test',
         deliveries: {
           hls: {
             enabled: true,
@@ -319,7 +330,7 @@ describe('Silo integration', () => {
             {
               file_id: 999,
               file_path:
-                '/mnt/media/tv/Some Other File.mkv'
+                '/test-library/series/Other Series/Episode.mkv'
             }
           ]),
           {
@@ -347,7 +358,7 @@ describe('Silo integration', () => {
         },
         {
           absolute_path:
-            '/mnt/media/movies/LOTR.mkv'
+            '/test-library/movies/Example Movie.mkv'
         }
       );
 

@@ -37,6 +37,9 @@ Symlinked media files are followed and scanned while the configured media direct
 
 Nuvi-Flow can use a separate [Silo](https://github.com/Silo-Server/silo-server) server for authenticated HLS transcoding while keeping Silo credentials and internal container addresses away from Nuvio/Stremio clients.
 
+See the [playback roadmap](docs/PLAYBACK_ROADMAP.md) for the staged reliability,
+device identity, Auto playback, proxy, and fallback work.
+
 The current integration provides:
 
 - Original-file direct playback as the first stream option
@@ -171,7 +174,10 @@ The password-protected dashboard provides:
 - Custom addon name
 - Custom addon icon
 - Secure addon URL display and one-click regeneration
-- Running version and Git commit badge
+- Running version and Git commit identity in the lower-left server status card
+
+The larger admin interface organization pass is tracked as a later roadmap item;
+current playback and reliability milestones take priority.
 
 Saved Radarr and Sonarr API keys are never returned to the browser.
 

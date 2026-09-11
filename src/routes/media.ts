@@ -15,7 +15,7 @@ import {
   type PlaybackSessionRegistry,
   type PlaybackSessionResult
 } from '../services/playback/playback-sessions.js';
-import { SiloClient } from '../services/silo.js';
+import type { SiloService } from '../services/silo-service.js';
 import type { SettingsService } from '../services/settings.js';
 import type {
   ExternalSubtitleRow,
@@ -108,7 +108,8 @@ async function serveSiloStream(
   database: AppDatabase,
   settings: SettingsService,
   config: AppConfig,
-  playbackSessions: PlaybackSessionRegistry
+  playbackSessions: PlaybackSessionRegistry,
+  silo: SiloService
 ): Promise<FastifyReply> {
   const authorized = authorize(
     request,
@@ -231,30 +232,23 @@ async function serveSiloStream(
         authorized.token!.exp,
         async ({ playbackId }) => {
           const startupStartedAt = Date.now();
-          const silo = new SiloClient(
-            settings.siloUrl,
-            settings.siloApiKey
-          );
+          const started =
+            await silo.startPlaybackForMedia(
+              item,
+              authorized.file,
+              settings.siloProfileId,
+              settings.siloTranscodeQuality,
+              episode
+            );
 
-          const fileId = await silo.resolveFileId(
-            item,
-            authorized.file,
-            episode
-          );
-
-          if (fileId === null) {
+          if (!started) {
             throw new SiloPlaybackRouteError(
               404,
               'This file could not be resolved in Silo.'
             );
           }
 
-          const decision =
-            await silo.startPlayback(
-              fileId,
-              settings.siloProfileId,
-              settings.siloTranscodeQuality
-            );
+          const { fileId, decision } = started;
 
           const plan = decision.playback_plan;
 
@@ -354,7 +348,8 @@ async function serveSiloMedia(
   request: FastifyRequest,
   reply: FastifyReply,
   settings: SettingsService,
-  config: AppConfig
+  config: AppConfig,
+  silo: SiloService
 ): Promise<FastifyReply> {
   const { token } =
     request.params as { token: string };
@@ -386,11 +381,6 @@ async function serveSiloMedia(
         error: 'Silo is not configured.'
       });
   }
-
-  const silo = new SiloClient(
-    settings.siloUrl,
-    settings.siloApiKey
-  );
 
   const response = await silo.fetchMedia(
     payload.path,
@@ -439,7 +429,7 @@ async function serveSiloMedia(
 
     const sourceUrl = new URL(
       payload.path,
-      'http://silo.internal'
+      'http://playlist-base.invalid'
     );
 
     const rewritten = manifest
@@ -506,7 +496,8 @@ export function registerMediaRoutes(
   database: AppDatabase,
   config: AppConfig,
   settings: SettingsService,
-  playbackSessions: PlaybackSessionRegistry
+  playbackSessions: PlaybackSessionRegistry,
+  silo: SiloService
 ): void {
   const options = { config: { rateLimit: { max: 1200, timeWindow: '1 minute' } } };
   app.get('/media/:token', options, (request, reply) => serveMedia(request, reply, database, config));
@@ -522,7 +513,8 @@ export function registerMediaRoutes(
         database,
         settings,
         config,
-        playbackSessions
+        playbackSessions,
+        silo
       )
   );
 
@@ -534,7 +526,8 @@ export function registerMediaRoutes(
         request,
         reply,
         settings,
-        config
+        config,
+        silo
       )
   );
   app.get('/subtitles/:token/:subtitleId', { config: { rateLimit: { max: 600, timeWindow: '1 minute' } } }, async (request, reply) => {

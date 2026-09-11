@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { buildInfo } from '../lib/build-info.js';
 import type { MediaFileRow, MediaItemRow } from '../types.js';
 
 export class SiloApiError extends Error {
@@ -383,6 +384,7 @@ export class SiloClient {
     profileId: string,
     qualityPreference = '1080p-medium'
   ): Promise<SiloPlaybackDecision> {
+    const clientVersion = buildInfo().version;
     const body: SiloPlaybackStartRequest = {
       protocol_version: 3,
 
@@ -430,7 +432,7 @@ export class SiloClient {
       client_playback_context: {
         protocol_version: 3,
         form_factor: 'tv',
-        app_version: '1.1.1',
+        app_version: clientVersion,
 
         device: {
           platform: 'android',
@@ -495,7 +497,7 @@ export class SiloClient {
           'Content-Type': 'application/json',
           'X-Profile-Id': profileId,
           'X-Silo-Client': 'Nuvi-Flow',
-          'X-Silo-Client-Version': '1.1.1'
+          'X-Silo-Client-Version': clientVersion
         },
 
         body: JSON.stringify(body)

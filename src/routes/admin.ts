@@ -15,7 +15,7 @@ import type { MediaFileRow, MediaItemRow, MediaType } from '../types.js';
 import type { MediaScanner } from '../services/scanner.js';
 import { RadarrClient } from '../services/radarr.js';
 import { SonarrClient } from '../services/sonarr.js';
-import { SiloClient } from '../services/silo.js';
+import type { SiloService } from '../services/silo-service.js';
 import type { RequestService } from '../services/requester.js';
 import type { SettingsService } from '../services/settings.js';
 import type { TmdbService } from '../services/tmdb.js';
@@ -130,7 +130,8 @@ export function registerAdminRoutes(
   scanner: MediaScanner,
   tmdb: TmdbService,
   requester: RequestService,
-  config: AppConfig
+  config: AppConfig,
+  silo: SiloService
 ): void {
   app.get('/admin/login', async (request, reply) => {
     if (sessionFor(request, config)) return reply.redirect('/admin');
@@ -399,16 +400,11 @@ export function registerAdminRoutes(
 
     try {
       if (service === 'silo') {
-        const client = new SiloClient(
-          url,
-          apiKey
-        );
-
-        const [health, profiles] =
-          await Promise.all([
-            client.health(),
-            client.profiles()
-          ]);
+        const { health, profiles } =
+          await silo.testConnection(
+            url,
+            apiKey
+          );
 
         return reply.send({
           ok: true,
