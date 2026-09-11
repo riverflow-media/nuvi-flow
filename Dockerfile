@@ -31,7 +31,8 @@ COPY --from=build --chown=node:node /app/dist ./dist
 RUN mkdir -p /app/data && chown node:node /app/data
 USER node
 ENV NODE_ENV=production PORT=60500 DATABASE_PATH=/app/data/media.db \
-    FFPROBE_PATH=/app/node_modules/ffprobe-static/bin/linux/x64/ffprobe
+    FFPROBE_PATH=/app/node_modules/ffprobe-static/bin/linux/x64/ffprobe \
+    NUVI_FLOW_VERSION=$VERSION NUVI_FLOW_REVISION=$REVISION
 EXPOSE 60500
 VOLUME ["/app/data"]
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 CMD ["node", "-e", "fetch('http://127.0.0.1:60500/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]

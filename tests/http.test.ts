@@ -52,17 +52,46 @@ describe('Stremio and media HTTP endpoints', () => {
     return created.token;
   }
 
+  function addonUrl(pathname: string): string {
+    return `${built.settings.addonAccessPath}${pathname}`;
+  }
+
+  it('requires the private addon URL for every Stremio resource', async () => {
+    expect(built.settings.addonAccessToken).toMatch(/^[A-Za-z0-9_-]{43}$/);
+
+    for (const url of [
+      '/manifest.json',
+      '/catalog/movie/personal_movies.json',
+      '/meta/movie/tt1234567.json',
+      '/stream/movie/tt1234567.json',
+      '/addon/not-the-token/manifest.json'
+    ]) {
+      const response = await built.app.inject({ method: 'GET', url });
+      expect(response.statusCode).toBe(404);
+    }
+
+    const manifestResponse = await built.app.inject({
+      method: 'GET',
+      url: addonUrl('/manifest.json')
+    });
+    expect(manifestResponse.statusCode).toBe(200);
+    expect(manifestResponse.json()).toMatchObject({
+      id: 'community.nuviflow',
+      name: 'Nuvi-Flow'
+    });
+  });
+
   it('returns catalog and meta protocol objects', async () => {
-    const catalog = await built.app.inject({ method: 'GET', url: '/catalog/movie/personal_movies.json' });
+    const catalog = await built.app.inject({ method: 'GET', url: addonUrl('/catalog/movie/personal_movies.json') });
     expect(catalog.statusCode).toBe(200);
     expect(catalog.json().metas[0]).toMatchObject({ id: 'tt1234567', type: 'movie', name: 'Example Movie' });
-    const meta = await built.app.inject({ method: 'GET', url: '/meta/movie/tt1234567.json' });
+    const meta = await built.app.inject({ method: 'GET', url: addonUrl('/meta/movie/tt1234567.json') });
     expect(meta.statusCode).toBe(200);
     expect(meta.json().meta).toMatchObject({ id: 'tt1234567', moviedb_id: 123 });
   });
 
   it('returns a signed direct stream URL', async () => {
-    const response = await built.app.inject({ method: 'GET', url: '/stream/movie/tt1234567.json' });
+    const response = await built.app.inject({ method: 'GET', url: addonUrl('/stream/movie/tt1234567.json') });
     expect(response.statusCode).toBe(200);
     expect(response.json().streams[0]).toMatchObject({ title: '1080p • H.264 • AAC 5.1' });
     expect(response.json().streams[0].url).toMatch(/^https:\/\/media\.example\.test\/media\//);
@@ -76,7 +105,7 @@ describe('Stremio and media HTTP endpoints', () => {
 
     const response = await built.app.inject({
       method: 'GET',
-      url: '/stream/movie/tt1234567.json'
+      url: addonUrl('/stream/movie/tt1234567.json')
     });
 
     expect(response.statusCode).toBe(200);

@@ -1,5 +1,9 @@
 import path from 'node:path';
-import type { FastifyInstance } from 'fastify';
+import type {
+  FastifyInstance,
+  FastifyReply,
+  FastifyRequest
+} from 'fastify';
 import type { AppDatabase } from '../db/index.js';
 import { parseJson } from '../lib/json.js';
 import { createStreamToken } from '../lib/security.js';
@@ -14,10 +18,12 @@ import type { ExternalSubtitleRow, MediaFileRow, MediaItemRow, MediaType } from 
 import type { SettingsService } from '../services/settings.js';
 import type { RequestService } from '../services/requester.js';
 import type { AppConfig } from '../config.js';
+import { matchesAddonAccessToken } from '../lib/addon-access.js';
+import { buildInfo } from '../lib/build-info.js';
 
 const manifest = {
   id: 'community.nuviflow',
-  version: '1.1.1',
+  version: buildInfo().version,
   name: 'Nuvi-Flow',
   description: 'Direct playback of your personal movie and TV library.',
   resources: ['catalog', 'meta', 'stream'],
@@ -60,7 +66,21 @@ export function registerStremioRoutes(
   config: AppConfig,
   requester: RequestService
 ): void {
-  app.get('/manifest.json', { config: { rateLimit: { max: 300, timeWindow: '1 minute' } } }, async (_request, reply) => {
+  const prefix = '/addon/:accessToken';
+  const secureRoute = {
+    config: { rateLimit: { max: 300, timeWindow: '1 minute' } },
+    preHandler: async (
+      request: FastifyRequest,
+      reply: FastifyReply
+    ) => {
+      const { accessToken } = request.params as { accessToken?: string };
+      if (!matchesAddonAccessToken(accessToken, settings.addonAccessToken)) {
+        return reply.code(404).send({ error: 'Not found' });
+      }
+    }
+  };
+
+  app.get(`${prefix}/manifest.json`, secureRoute, async (_request, reply) => {
     reply
       .header('Cache-Control', 'no-store')
       .send({
@@ -85,10 +105,10 @@ export function registerStremioRoutes(
       GROUP BY mi.id ORDER BY ${order} LIMIT 100 OFFSET ?`).all(expectedType, search, search, skip) as MediaItemRow[];
     reply.header('Cache-Control', 'public, max-age=60').send({ metas: rows.map(catalogPreview) });
   };
-  app.get('/catalog/:type/:catalogId.json', { config: { rateLimit: { max: 300, timeWindow: '1 minute' } } }, catalogHandler);
-  app.get('/catalog/:type/:catalogId/:extra.json', { config: { rateLimit: { max: 300, timeWindow: '1 minute' } } }, catalogHandler);
+  app.get(`${prefix}/catalog/:type/:catalogId.json`, secureRoute, catalogHandler);
+  app.get(`${prefix}/catalog/:type/:catalogId/:extra.json`, secureRoute, catalogHandler);
 
-  app.get('/meta/:type/:id.json', { config: { rateLimit: { max: 300, timeWindow: '1 minute' } } }, async (request, reply) => {
+  app.get(`${prefix}/meta/:type/:id.json`, secureRoute, async (request, reply) => {
     const { type, id } = request.params as { type: string; id: string };
     if (!['movie', 'series'].includes(type)) return reply.code(404).send({ meta: null });
     const item = database.sqlite.prepare(`SELECT mi.* FROM media_items mi WHERE mi.type=? AND mi.stremio_id=?
@@ -110,7 +130,7 @@ export function registerStremioRoutes(
     reply.header('Cache-Control', 'public, max-age=300').send({ meta: fullMeta(item, episodes) });
   });
 
-  app.get('/stream/:type/:id.json', { config: { rateLimit: { max: 300, timeWindow: '1 minute' } } }, async (request, reply) => {
+  app.get(`${prefix}/stream/:type/:id.json`, secureRoute, async (request, reply) => {
     const { type, id } = request.params as { type: string; id: string };
     let files: MediaFileRow[] = [];
     let requestedEpisode:

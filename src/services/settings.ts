@@ -1,8 +1,16 @@
 import type { AppConfig } from '../config.js';
 import type { AppDatabase } from '../db/index.js';
+import {
+  createAddonAccessToken,
+  isValidAddonAccessToken
+} from '../lib/addon-access.js';
 
 export class SettingsService {
-  constructor(private readonly database: AppDatabase, private readonly defaults: AppConfig) {}
+  constructor(private readonly database: AppDatabase, private readonly defaults: AppConfig) {
+    if (!isValidAddonAccessToken(this.get('addonAccessToken'))) {
+      this.regenerateAddonAccessToken();
+    }
+  }
 
   get(key: string, fallback = ''): string {
     return this.database.getSetting(key) ?? fallback;
@@ -14,6 +22,8 @@ export class SettingsService {
 
   get baseUrl(): string { return this.get('baseUrl', this.defaults.baseUrl).replace(/\/+$/, ''); }
   get addonName(): string { return this.get('addonName', this.defaults.addonName); }
+  get addonAccessToken(): string { return this.get('addonAccessToken'); }
+  get addonAccessPath(): string { return `/addon/${this.addonAccessToken}`; }
   get addonIconUpdatedAt(): number { return this.number('addonIconUpdatedAt', 0, 0); }
   get tmdbApiKey(): string { return this.get('tmdbApiKey', this.defaults.tmdbApiKey); }
   get moviesPath(): string { return this.get('moviesPath', this.defaults.moviesPath); }
@@ -146,10 +156,17 @@ export class SettingsService {
     return ['true', '1', 'yes', 'on'].includes(value.toLowerCase());
   }
 
+  regenerateAddonAccessToken(): string {
+    const token = createAddonAccessToken();
+    this.set('addonAccessToken', token);
+    return token;
+  }
+
   publicView(): Record<string, string | number | boolean> {
     return {
       baseUrl: this.baseUrl,
       addonName: this.addonName,
+      addonAccessPath: this.addonAccessPath,
       addonIconUpdatedAt: this.addonIconUpdatedAt,
       tmdbConfigured: Boolean(this.tmdbApiKey),
       metadataProvider: this.tmdbApiKey ? 'TMDB with automatic Cinemeta fallback' : 'Automatic Cinemeta with local fallback',

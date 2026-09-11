@@ -31,9 +31,11 @@ function appState(files = [mediaFile()]) {
     logs: [],
     settings: {
       baseUrl: 'http://localhost:60500', moviesPath: '/media/movies', tvPath: '/media/tv',
+      addonAccessPath: '/addon/test-secure-install-token',
       scanIntervalMinutes: 30, minimumFileSizeMb: 50, streamTokenExpiryHours: 168,
       longLivedStreamTokens: false, adminUsername: 'admin', tmdbConfigured: true
-    }
+    },
+    build: { version: '1.1.1', revision: 'abc123def456' }
   };
 }
 
@@ -91,6 +93,50 @@ describe('media details modal', () => {
     expect(adminCss).toContain('@media(max-width:600px)');
     expect(adminCss).toContain('.info-grid{grid-template-columns:1fr}');
     expect(adminCss).toContain('overflow-wrap:anywhere');
+  });
+
+  it('shows the tested build and secure manifest URL', async () => {
+    const fetchMock = vi.fn(async (input: string | URL | Request) => {
+      if (String(input) === '/admin/api/state') return json(appState());
+      return json({ error: 'Unexpected request' }, 500);
+    });
+    install(fetchMock);
+    await flush();
+    expect(document.querySelector('#buildVersion')?.textContent)
+      .toBe('v1.1.1 · abc123def456');
+    expect((document.querySelector('#manifestUrl') as HTMLInputElement).value)
+      .toBe('http://localhost:60500/addon/test-secure-install-token/manifest.json');
+  });
+
+  it('regenerates the secure manifest URL with an explicit warning', async () => {
+    const replacement = '/addon/replacement-secure-install-token';
+    const fetchMock = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      if (String(input) === '/admin/api/state') return json(appState());
+      if (
+        String(input) === '/admin/api/addon-access/regenerate' &&
+        init?.method === 'POST'
+      ) {
+        return json({
+          ok: true,
+          settings: {
+            ...appState().settings,
+            addonAccessPath: replacement
+          }
+        });
+      }
+      return json({ error: 'Unexpected request' }, 500);
+    });
+    install(fetchMock);
+    await flush();
+
+    document.querySelector<HTMLButtonElement>('#regenerateAddonUrl')!.click();
+    await flush();
+
+    expect(window.confirm).toHaveBeenCalledWith(
+      expect.stringContaining('stop working immediately')
+    );
+    expect((document.querySelector('#manifestUrl') as HTMLInputElement).value)
+      .toBe(`http://localhost:60500${replacement}/manifest.json`);
   });
 
   it('opens with the complete long path, locks body scroll, and closes by Escape or backdrop', async () => {

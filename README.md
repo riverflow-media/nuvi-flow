@@ -18,6 +18,7 @@ Nuvi-Flow is based on [Squipy411/personal-media-addon](https://github.com/Squipy
 - HTTP byte-range support for seeking
 - External subtitle support
 - Signed media URLs
+- Mandatory private addon installation URLs
 - Optional Silo-backed HLS transcoding
 - No media-file modifications
 - Searchable movie and series catalogs
@@ -169,6 +170,8 @@ The password-protected dashboard provides:
 - Runtime configuration
 - Custom addon name
 - Custom addon icon
+- Secure addon URL display and one-click regeneration
+- Running version and Git commit badge
 
 Saved Radarr and Sonarr API keys are never returned to the browser.
 
@@ -195,7 +198,7 @@ Default endpoints:
 
 - Admin: `http://localhost:60500/admin`
 - Health: `http://localhost:60500/health`
-- Manifest: `http://localhost:60500/manifest.json`
+- Secure manifest: copy it from **Admin → Settings**
 - Addon icon: `http://localhost:60500/addon-icon`
 
 ### Persistent storage
@@ -242,11 +245,15 @@ Each successful default-branch build publishes both `latest` and an immutable `s
 
 Make sure the health endpoint returns `"status":"ok"`.
 
-Then install the addon using:
+Open **Admin → Settings** and copy the generated **Nuvio addon manifest URL**. It has this form:
 
 ```text
-https://YOUR-NUVI-FLOW-DOMAIN/manifest.json
+https://YOUR-NUVI-FLOW-DOMAIN/addon/RANDOM-256-BIT-TOKEN/manifest.json
 ```
+
+The token is created automatically on first startup and stored in the persistent database. The public `/manifest.json`, `/catalog`, `/meta`, and `/stream` routes are intentionally unavailable, so knowing the domain alone is not enough to use the addon.
+
+Keep the installation URL private. If it may have been exposed, choose **Regenerate secure URL** in the dashboard. The prior URL stops working immediately, and Nuvi-Flow must be reinstalled in Nuvio with the replacement URL.
 
 The Nuvi-Flow manifest ID is:
 
@@ -254,7 +261,7 @@ The Nuvi-Flow manifest ID is:
 community.nuviflow
 ```
 
-If you previously installed Personal Media Addon or an earlier build using the old manifest ID, remove the old addon and install the Nuvi-Flow manifest again.
+If you previously installed Nuvi-Flow from `/manifest.json`, remove that installation and reinstall it using the secure URL shown in the dashboard.
 
 ## Automatic request setup
 

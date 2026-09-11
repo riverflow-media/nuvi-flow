@@ -13,6 +13,7 @@ import {
   MAX_ADDON_ICON_BYTES
 } from './lib/branding.js';
 import { hashPassword } from './lib/security.js';
+import { redactAddonAccessPath } from './lib/addon-access.js';
 import { registerAdminRoutes } from './routes/admin.js';
 import { registerMediaRoutes } from './routes/media.js';
 import { registerStremioRoutes } from './routes/stremio.js';
@@ -34,7 +35,20 @@ export interface BuiltApp {
 
 export async function buildApp(config: AppConfig): Promise<BuiltApp> {
   const app = Fastify({
-    logger: { level: config.logLevel },
+    logger: {
+      level: config.logLevel,
+      serializers: {
+        req(request: any) {
+          return {
+            method: request.method,
+            url: redactAddonAccessPath(request.url || ''),
+            host: request.host,
+            remoteAddress: request.remoteAddress,
+            remotePort: request.remotePort
+          };
+        }
+      }
+    },
     trustProxy: config.trustProxy,
     exposeHeadRoutes: false,
     routerOptions: { maxParamLength: 1024 },

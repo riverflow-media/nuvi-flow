@@ -20,6 +20,7 @@ import type { RequestService } from '../services/requester.js';
 import type { SettingsService } from '../services/settings.js';
 import type { TmdbService } from '../services/tmdb.js';
 import type { MetadataSearchResult } from '../services/tmdb.js';
+import { buildInfo } from '../lib/build-info.js';
 
 const COOKIE_NAME = 'nuviflow_admin';
 
@@ -170,7 +171,17 @@ export function registerAdminRoutes(
     const logs = database.sqlite.prepare(`SELECT id,mode,status,discovered,processed,matched,unmatched,errors,
       started_at startedAt,finished_at finishedAt,message FROM scan_runs ORDER BY started_at DESC LIMIT 100`).all();
     const publicFiles = files.map(publicFile);
-    return reply.header('Cache-Control', 'no-store').send({ counts, files: publicFiles, recent: publicFiles.slice(0, 12), logs, settings: settings.publicView(), scanning: scanner.isRunning() });
+    return reply.header('Cache-Control', 'no-store').send({ counts, files: publicFiles, recent: publicFiles.slice(0, 12), logs, settings: settings.publicView(), build: buildInfo(), scanning: scanner.isRunning() });
+  });
+
+  app.post('/admin/api/addon-access/regenerate', {
+    preHandler: requireAdmin(config, true)
+  }, async (_request, reply) => {
+    settings.regenerateAddonAccessToken();
+    return reply.header('Cache-Control', 'no-store').send({
+      ok: true,
+      settings: settings.publicView()
+    });
   });
 
   app.get('/admin/api/requests', { preHandler: requireAdmin(config) }, async (_request, reply) => {

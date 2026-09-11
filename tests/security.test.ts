@@ -5,6 +5,12 @@ import {
   verifySiloMediaToken,
   verifyStreamToken
 } from '../src/lib/security.js';
+import {
+  createAddonAccessToken,
+  matchesAddonAccessToken,
+  redactAddonAccessPath
+} from '../src/lib/addon-access.js';
+import { buildInfo } from '../src/lib/build-info.js';
 
 describe('HMAC stream tokens', () => {
   const secret = 'a-secret-long-enough-for-unit-testing-only';
@@ -81,5 +87,34 @@ describe('HMAC stream tokens', () => {
   it('rejects expired tokens', () => {
     const { token } = createStreamToken('file_1', 10_000, secret, 'token-1');
     expect(verifyStreamToken(token, secret, 10_000)).toBeNull();
+  });
+});
+
+describe('addon access tokens', () => {
+  it('creates 256-bit URL-safe tokens and compares them safely', () => {
+    const token = createAddonAccessToken();
+    expect(token).toMatch(/^[A-Za-z0-9_-]{43}$/);
+    expect(matchesAddonAccessToken(token, token)).toBe(true);
+    expect(matchesAddonAccessToken(`${token}x`, token)).toBe(false);
+    expect(matchesAddonAccessToken(undefined, token)).toBe(false);
+  });
+
+  it('redacts addon credentials from request URLs', () => {
+    const token = createAddonAccessToken();
+    expect(redactAddonAccessPath(
+      `/addon/${token}/stream/movie/tt123.json?x=1`
+    )).toBe('/addon/[redacted]/stream/movie/tt123.json?x=1');
+  });
+});
+
+describe('build identity', () => {
+  it('uses the exact container build metadata and a short revision', () => {
+    expect(buildInfo({
+      NUVI_FLOW_VERSION: '1.1.1',
+      NUVI_FLOW_REVISION: '1234567890abcdef'
+    })).toEqual({
+      version: '1.1.1',
+      revision: '1234567890ab'
+    });
   });
 });

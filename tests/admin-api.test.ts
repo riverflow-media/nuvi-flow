@@ -51,6 +51,35 @@ describe('admin media detail API', () => {
     return built.app.inject({ method, url, headers: { cookie, 'x-csrf-token': csrf }, payload });
   }
 
+  it('returns build identity and can revoke the secure addon URL', async () => {
+    const before = await request('GET', '/admin/api/state');
+    expect(before.statusCode).toBe(200);
+    expect(before.json().build).toMatchObject({ version: '1.1.1' });
+
+    const oldPath = before.json().settings.addonAccessPath as string;
+    expect(oldPath).toMatch(/^\/addon\/[A-Za-z0-9_-]{43}$/);
+    expect((await built.app.inject({
+      method: 'GET',
+      url: `${oldPath}/manifest.json`
+    })).statusCode).toBe(200);
+
+    const regenerated = await request(
+      'POST',
+      '/admin/api/addon-access/regenerate'
+    );
+    expect(regenerated.statusCode).toBe(200);
+    const newPath = regenerated.json().settings.addonAccessPath as string;
+    expect(newPath).not.toBe(oldPath);
+    expect((await built.app.inject({
+      method: 'GET',
+      url: `${oldPath}/manifest.json`
+    })).statusCode).toBe(404);
+    expect((await built.app.inject({
+      method: 'GET',
+      url: `${newPath}/manifest.json`
+    })).statusCode).toBe(200);
+  });
+
   it('returns coherent current-match details and updates action state', async () => {
     const details = await request('GET', '/admin/api/files/file1');
     expect(details.statusCode).toBe(200);
