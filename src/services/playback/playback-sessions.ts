@@ -79,43 +79,6 @@ export function createPlaybackKey(
     .digest('base64url');
 }
 
-export interface ProvisionalDeviceIdentityInput {
-  explicitDeviceId?: string;
-  clientName?: string;
-  clientVersion?: string;
-  userAgent?: string;
-  ip: string;
-  streamTokenId: string;
-}
-
-export function provisionalDeviceId(
-  input: ProvisionalDeviceIdentityInput
-): string {
-  const explicit = input.explicitDeviceId?.trim();
-  const material = explicit
-    ? [
-        'explicit',
-        explicit,
-        input.clientName || '',
-        input.clientVersion || ''
-      ]
-    : [
-        'request-scope',
-        input.ip,
-        input.userAgent || '',
-        input.clientName || '',
-        input.clientVersion || '',
-        input.streamTokenId
-      ];
-
-  const digest = createHash('sha256')
-    .update(JSON.stringify(material))
-    .digest('hex')
-    .slice(0, 24);
-
-  return `provisional_${digest}`;
-}
-
 export class PlaybackSessionRegistry {
   private readonly pendingSessions = new Map<
     string,

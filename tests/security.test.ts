@@ -44,6 +44,31 @@ describe('HMAC stream tokens', () => {
     ).toEqual(payload);
   });
 
+  it('preserves a validated signed device identity', () => {
+    const deviceId = 'device_1234567890abcdef12345678';
+    const { token, payload } = createStreamToken(
+      'file_1',
+      10_000,
+      secret,
+      'token-device',
+      { deviceId }
+    );
+
+    expect(payload.deviceId).toBe(deviceId);
+    expect(verifyStreamToken(token, secret, 9_000))
+      .toEqual(payload);
+  });
+
+  it('refuses to sign malformed device identity context', () => {
+    expect(() => createStreamToken(
+      'file_1',
+      10_000,
+      secret,
+      'token-device',
+      { deviceId: 'raw-device-name' }
+    )).toThrow('Invalid stream device identity');
+  });
+
   it('rejects tampering and the wrong secret', () => {
     const { token } = createStreamToken('file_1', 10_000, secret, 'token-1');
     expect(verifyStreamToken(`${token}x`, secret, 9_000)).toBeNull();

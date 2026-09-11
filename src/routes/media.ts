@@ -11,10 +11,10 @@ import {
   verifyStreamToken
 } from '../lib/security.js';
 import {
-  provisionalDeviceId,
   type PlaybackSessionRegistry,
   type PlaybackSessionResult
 } from '../services/playback/playback-sessions.js';
+import { deriveDeviceIdentity } from '../services/playback/device-identity.js';
 import type { SiloService } from '../services/silo-service.js';
 import type { SettingsService } from '../services/settings.js';
 import type {
@@ -191,25 +191,26 @@ async function serveSiloStream(
     };
   }
 
-  const deviceId = provisionalDeviceId({
-    explicitDeviceId:
-      headerValue(
-        request,
-        'x-nuvi-flow-device-id'
-      ) ||
-      headerValue(
-        request,
-        'x-stremio-device-id'
-      ),
-    clientName:
-      headerValue(request, 'x-stremio-client'),
-    clientVersion:
-      headerValue(request, 'x-stremio-version'),
-    userAgent:
-      headerValue(request, 'user-agent'),
-    ip: request.ip,
-    streamTokenId: authorized.token!.jti
-  });
+  const fallbackIdentity = authorized.token!.deviceId
+    ? null
+    : deriveDeviceIdentity({
+        installationId: settings.addonAccessToken,
+        explicitDeviceId:
+          headerValue(request, 'x-nuvi-flow-device-id') ||
+          headerValue(request, 'x-stremio-device-id'),
+        clientName: headerValue(request, 'x-stremio-client'),
+        clientVersion: headerValue(request, 'x-stremio-version'),
+        userAgent: headerValue(request, 'user-agent'),
+        ip: request.ip,
+        requestScope: authorized.token!.jti
+      });
+  const deviceId =
+    authorized.token!.deviceId ||
+    fallbackIdentity!.id;
+  const deviceIdentitySource =
+    authorized.token!.deviceId
+      ? 'signed_stream_token'
+      : fallbackIdentity!.source;
 
   let sessionResult: PlaybackSessionResult;
 
@@ -272,6 +273,8 @@ async function serveSiloStream(
             {
               playback_id: playbackId,
               device_id: deviceId,
+              device_identity_source:
+                deviceIdentitySource,
               media_file_id: authorized.file.id,
               silo_file_id: fileId,
               silo_session_id:

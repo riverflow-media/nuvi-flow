@@ -20,6 +20,7 @@ import type { RequestService } from '../services/requester.js';
 import type { AppConfig } from '../config.js';
 import { matchesAddonAccessToken } from '../lib/addon-access.js';
 import { buildInfo } from '../lib/build-info.js';
+import { deriveDeviceIdentity } from '../services/playback/device-identity.js';
 
 const manifest = {
   id: 'community.nuviflow',
@@ -57,6 +58,14 @@ function catalogType(catalogId: string): MediaType | null {
 function episodeId(id: string): { itemId: string; season: number; episode: number } | null {
   const match = /^(.*):(\d+):(\d+)$/.exec(id);
   return match ? { itemId: match[1]!, season: Number(match[2]), episode: Number(match[3]) } : null;
+}
+
+function headerValue(
+  request: FastifyRequest,
+  name: string
+): string | undefined {
+  const value = request.headers[name];
+  return Array.isArray(value) ? value[0] : value;
 }
 
 export function registerStremioRoutes(
@@ -161,6 +170,18 @@ export function registerStremioRoutes(
       requester.enqueueMissing(type, id);
     }
 
+    const deviceIdentity = deriveDeviceIdentity({
+      installationId: settings.addonAccessToken,
+      explicitDeviceId:
+        headerValue(request, 'x-nuvi-flow-device-id') ||
+        headerValue(request, 'x-stremio-device-id'),
+      clientName: headerValue(request, 'x-stremio-client'),
+      clientVersion: headerValue(request, 'x-stremio-version'),
+      userAgent: headerValue(request, 'user-agent'),
+      ip: request.ip,
+      requestScope: request.id
+    });
+
     const streams = files.flatMap((file) => {
       const expiry =
         Date.now() +
@@ -173,7 +194,9 @@ export function registerStremioRoutes(
         createStreamToken(
           file.id,
           expiry,
-          config.streamSecret
+          config.streamSecret,
+          undefined,
+          { deviceId: deviceIdentity.id }
         );
 
       database.sqlite.prepare('INSERT OR IGNORE INTO stream_tokens (jti,media_file_id,expires_at,created_at,revoked) VALUES (?,?,?,?,0)')
@@ -215,7 +238,10 @@ export function registerStremioRoutes(
         expiry,
         config.streamSecret,
         undefined,
-        requestedEpisode
+        {
+          ...requestedEpisode,
+          deviceId: deviceIdentity.id
+        }
       );
 
       database.sqlite.prepare('INSERT OR IGNORE INTO stream_tokens (jti,media_file_id,expires_at,created_at,revoked) VALUES (?,?,?,?,0)')

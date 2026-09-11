@@ -7,10 +7,10 @@ import {
 
 import {
   PlaybackSessionRegistry,
-  provisionalDeviceId,
   type PlaybackKeyParts,
   type PlaybackSessionStart
 } from '../src/services/playback/playback-sessions.js';
+import { deriveDeviceIdentity } from '../src/services/playback/device-identity.js';
 
 const baseKey: PlaybackKeyParts = {
   deviceId: 'device-a',
@@ -32,45 +32,73 @@ const started: PlaybackSessionStart = {
 };
 
 describe('PlaybackSessionRegistry', () => {
-  it('derives a stable provisional identity without retaining raw request data', () => {
+  it('derives a stable client-hint identity without retaining raw request data', () => {
     const input = {
+      installationId: 'installation-a',
       ip: '192.0.2.10',
       userAgent: 'Nuvio Test Client',
       clientName: 'Nuvio',
       clientVersion: '1.2.3',
-      streamTokenId: 'stream-token-a'
+      requestScope: 'request-a'
     };
 
-    const first = provisionalDeviceId(input);
-    const second = provisionalDeviceId(input);
-    const different = provisionalDeviceId({
+    const first = deriveDeviceIdentity(input);
+    const second = deriveDeviceIdentity(input);
+    const different = deriveDeviceIdentity({
       ...input,
       userAgent: 'Different Client'
     });
 
-    expect(first).toBe(second);
-    expect(first).toMatch(/^provisional_[a-f0-9]{24}$/);
-    expect(different).not.toBe(first);
-    expect(first).not.toContain(input.ip);
-    expect(first).not.toContain(input.userAgent);
+    expect(first).toStrictEqual(second);
+    expect(first).toMatchObject({
+      id: expect.stringMatching(/^device_[a-f0-9]{24}$/),
+      source: 'client_hints'
+    });
+    expect(different.id).not.toBe(first.id);
+    expect(first.id).not.toContain(input.ip);
+    expect(first.id).not.toContain(input.userAgent);
   });
 
-  it('separates fallback identities when proxied clients have different stream tokens', () => {
-    const sharedRequest = {
-      ip: '172.19.0.10',
+  it('keeps explicit identity stable across changing network and client hints', () => {
+    const first = deriveDeviceIdentity({
+      installationId: 'installation-a',
+      explicitDeviceId: 'nuvio-device-a',
+      ip: '192.0.2.10',
       userAgent: 'Nuvio Android'
+    });
+    const second = deriveDeviceIdentity({
+      installationId: 'installation-a',
+      explicitDeviceId: 'nuvio-device-a',
+      ip: '198.51.100.20',
+      userAgent: 'Nuvio TV'
+    });
+    const otherDevice = deriveDeviceIdentity({
+      installationId: 'installation-a',
+      explicitDeviceId: 'nuvio-device-b'
+    });
+
+    expect(first.source).toBe('explicit');
+    expect(first.id).toBe(second.id);
+    expect(otherDevice.id).not.toBe(first.id);
+  });
+
+  it('separates request-scope fallbacks when no client hints exist', () => {
+    const sharedRequest = {
+      installationId: 'installation-a',
+      ip: '172.19.0.10'
     };
 
-    const first = provisionalDeviceId({
+    const first = deriveDeviceIdentity({
       ...sharedRequest,
-      streamTokenId: 'stream-token-a'
+      requestScope: 'request-a'
     });
-    const second = provisionalDeviceId({
+    const second = deriveDeviceIdentity({
       ...sharedRequest,
-      streamTokenId: 'stream-token-b'
+      requestScope: 'request-b'
     });
 
-    expect(first).not.toBe(second);
+    expect(first.source).toBe('request_scope');
+    expect(first.id).not.toBe(second.id);
   });
 
   it('coalesces concurrent creation and reuses the active session', async () => {

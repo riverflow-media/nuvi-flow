@@ -5,7 +5,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { loadConfig } from '../src/config.js';
 import {
   createSiloMediaToken,
-  createStreamToken
+  createStreamToken,
+  verifySiloMediaToken,
+  verifyStreamToken
 } from '../src/lib/security.js';
 import { buildApp, type BuiltApp } from '../src/server.js';
 
@@ -95,6 +97,34 @@ describe('Stremio and media HTTP endpoints', () => {
     expect(response.statusCode).toBe(200);
     expect(response.json().streams[0]).toMatchObject({ title: '1080p • H.264 • AAC 5.1' });
     expect(response.json().streams[0].url).toMatch(/^https:\/\/media\.example\.test\/media\//);
+  });
+
+  it('carries stable, distinct device identities in fresh stream URLs', async () => {
+    const deviceIdFromStream = async (explicitDeviceId: string) => {
+      const response = await built.app.inject({
+        method: 'GET',
+        url: addonUrl('/stream/movie/tt1234567.json'),
+        headers: {
+          'x-nuvi-flow-device-id': explicitDeviceId,
+          'user-agent': 'Nuvio Test Client'
+        }
+      });
+      const pathname = new URL(response.json().streams[0].url).pathname;
+      const encodedToken = pathname.split('/').at(-1) || '';
+      return verifyStreamToken(
+        decodeURIComponent(encodedToken),
+        secret
+      );
+    };
+
+    const first = await deviceIdFromStream('device-a');
+    const second = await deviceIdFromStream('device-a');
+    const other = await deviceIdFromStream('device-b');
+
+    expect(first?.jti).not.toBe(second?.jti);
+    expect(first?.deviceId).toMatch(/^device_[a-f0-9]{24}$/);
+    expect(first?.deviceId).toBe(second?.deviceId);
+    expect(other?.deviceId).not.toBe(first?.deviceId);
   });
 
   it('adds a second Silo transcoded stream without changing direct playback', async () => {
@@ -394,21 +424,37 @@ describe('Stremio and media HTTP endpoints', () => {
 
     vi.stubGlobal('fetch', fetchMock);
 
-    const streamToken = token();
-    const streamUrl =
-      `/silo-stream/${encodeURIComponent(streamToken)}`;
+    const createSiloStreamUrl = async () => {
+      const response = await built.app.inject({
+        method: 'GET',
+        url: addonUrl('/stream/movie/tt1234567.json'),
+        headers: {
+          'user-agent': 'Nuvio Test Client',
+          'x-stremio-client': 'Nuvio',
+          'x-stremio-version': '1.2.3'
+        }
+      });
+
+      expect(response.statusCode).toBe(200);
+      return new URL(response.json().streams[1].url).pathname;
+    };
+
+    const firstStreamUrl = await createSiloStreamUrl();
+    const secondStreamUrl = await createSiloStreamUrl();
+
+    expect(firstStreamUrl).not.toBe(secondStreamUrl);
 
     const [first, second] = await Promise.all([
       built.app.inject({
         method: 'GET',
-        url: streamUrl,
+        url: firstStreamUrl,
         headers: {
           'user-agent': 'Nuvio Test Client'
         }
       }),
       built.app.inject({
         method: 'GET',
-        url: streamUrl,
+        url: secondStreamUrl,
         headers: {
           'user-agent': 'Nuvio Test Client'
         }
@@ -417,8 +463,16 @@ describe('Stremio and media HTTP endpoints', () => {
 
     expect(first.statusCode).toBe(302);
     expect(second.statusCode).toBe(302);
-    expect(first.headers.location).toBe(
-      second.headers.location
+    const upstreamPath = (location: string | undefined) => {
+      const encodedToken = location?.split('/').at(-1) || '';
+      return verifySiloMediaToken(
+        decodeURIComponent(encodedToken),
+        secret
+      )?.path;
+    };
+
+    expect(upstreamPath(first.headers.location)).toBe(
+      upstreamPath(second.headers.location)
     );
     expect(
       first.headers['x-nuvi-flow-playback-id']
@@ -438,17 +492,18 @@ describe('Stremio and media HTTP endpoints', () => {
     expect(versionRequests).toHaveLength(1);
     expect(startRequests).toHaveLength(1);
 
+    const thirdStreamUrl = await createSiloStreamUrl();
     const reused = await built.app.inject({
       method: 'GET',
-      url: streamUrl,
+      url: thirdStreamUrl,
       headers: {
         'user-agent': 'Nuvio Test Client'
       }
     });
 
     expect(reused.statusCode).toBe(302);
-    expect(reused.headers.location).toBe(
-      first.headers.location
+    expect(upstreamPath(reused.headers.location)).toBe(
+      upstreamPath(first.headers.location)
     );
     expect(
       reused.headers['x-nuvi-flow-playback-id']

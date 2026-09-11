@@ -13,26 +13,26 @@ before its image is published.
   structured playback IDs
 - Application-wide Silo service boundary for runtime playback, media proxying,
   and admin connection tests
+- Stable pseudonymous device identity carried in signed stream tokens, with
+  explicit client identifiers preferred and non-invasive fallbacks
 - Build version and Git revision visibility in the admin server-status card
 
-## Current focus: stable device identity
+## Current focus: persistent Silo file mapping
 
-- Derive a stable pseudonymous identity from explicit client identifiers when
-  available
-- Use signed installation/playback context as a safe fallback
-- Do not rely on IP alone or use invasive browser fingerprinting
-- Keep identity evidence separate from capability evidence
+- Persist the Nuvi-Flow media file ID and resolved Silo file ID
+- Store an optional Silo item ID, mapping status, mapped path, and update time
+- Prefer deterministic path mapping and refresh it during scans
+- Back up SQLite before applying the additive migration
 
 ## Next milestones
 
-1. Persistent Nuvi-Flow-to-Silo file mappings
-2. Conservative Auto playback policy with independent video, audio, HDR, and
+1. Conservative Auto playback policy with independent video, audio, HDR, and
    subtitle decisions
-3. Streaming HLS proxy improvements, including URI attributes and nested
+2. Streaming HLS proxy improvements, including URI attributes and nested
    playlists
-4. Bounded automatic fallback using startup and throughput evidence
-5. Capability learning with confidence, counters, and decay
-6. Concurrency and transcoder-capacity controls
+3. Bounded automatic fallback using startup and throughput evidence
+4. Capability learning with confidence, counters, and decay
+5. Concurrency and transcoder-capacity controls
 
 ## Later interface work
 

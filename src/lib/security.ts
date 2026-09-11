@@ -2,6 +2,7 @@ import { createHmac, randomBytes, scrypt as scryptCallback, timingSafeEqual } fr
 import { promisify } from 'node:util';
 
 const scrypt = promisify(scryptCallback);
+const deviceIdPattern = /^device_[a-f0-9]{24}$/;
 
 function signature(value: string, secret: string): string {
   return createHmac('sha256', secret).update(value).digest('base64url');
@@ -18,13 +19,15 @@ export interface StreamTokenPayload {
   fileId: string;
   exp: number;
   jti: string;
+  deviceId?: string;
   season?: number;
   episode?: number;
 }
 
 export interface StreamTokenContext {
-  season: number;
-  episode: number;
+  season?: number;
+  episode?: number;
+  deviceId?: string;
 }
 
 export function createStreamToken(
@@ -34,12 +37,31 @@ export function createStreamToken(
   jti = randomBytes(12).toString('base64url'),
   context?: StreamTokenContext
 ): { token: string; payload: StreamTokenPayload } {
+  const hasSeason = context?.season !== undefined;
+  const hasEpisode = context?.episode !== undefined;
+
+  if (hasSeason !== hasEpisode) {
+    throw new Error('Incomplete stream episode context.');
+  }
+
+  if (
+    context?.deviceId !== undefined &&
+    !deviceIdPattern.test(context.deviceId)
+  ) {
+    throw new Error('Invalid stream device identity.');
+  }
+
   const payload: StreamTokenPayload = {
     v: 1,
     fileId,
     exp: expiresAt,
     jti,
+    ...(context?.deviceId
+      ? { deviceId: context.deviceId }
+      : {}),
     ...(context
+      && context.season !== undefined
+      && context.episode !== undefined
       ? {
           season: context.season,
           episode: context.episode
@@ -61,6 +83,13 @@ export function verifyStreamToken(token: string, secret: string, now = Date.now(
     const hasEpisode = payload.episode !== undefined;
 
     if (hasSeason !== hasEpisode) return null;
+
+    if (
+      payload.deviceId !== undefined &&
+      !deviceIdPattern.test(payload.deviceId)
+    ) {
+      return null;
+    }
 
     if (
       hasSeason &&

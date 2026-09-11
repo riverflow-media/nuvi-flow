@@ -49,9 +49,17 @@ The current integration provides:
 - Server-side Silo authentication
 - Concurrent playback-start coalescing
 - Short-lived reuse of active Silo sessions, preventing repeated client requests from starting overlapping FFmpeg jobs
+- Signed pseudonymous device identity carried from stream discovery into playback,
+  allowing fresh URLs from the same identifiable device to reuse its session
 - A unique Nuvi-Flow playback ID in structured session logs and the `X-Nuvi-Flow-Playback-Id` response header
 
 Automatic per-device direct-play, remux, audio-only transcode, HDR, and quality fallback decisions are planned but are not part of the current fixed-quality integration.
+
+Device identity prefers an explicit Nuvio/Stremio device header. When none is
+available, Nuvi-Flow hashes coarse client hints and network context together with
+the private addon installation scope. It does not store those raw inputs or use
+invasive browser fingerprinting. Identical clients behind the same proxy may be
+indistinguishable until the client supplies a device identifier.
 
 For exact-path matching to work, the same media file must have the same container path in Nuvi-Flow and Silo. For example, mount the library as `/media/movies` in both containers rather than `/media/movies` in one and `/movies` in the other.
 
