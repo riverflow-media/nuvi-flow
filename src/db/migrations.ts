@@ -100,5 +100,18 @@ export const migrations = [
     ON media_requests(imdb_id);
 
   CREATE INDEX IF NOT EXISTS media_requests_tvdb_idx
-    ON media_requests(tvdb_id);`
+    ON media_requests(tvdb_id);`,
+  `CREATE TABLE IF NOT EXISTS silo_file_mappings (
+    media_file_id TEXT NOT NULL REFERENCES media_files(id) ON DELETE CASCADE,
+    silo_server_key TEXT NOT NULL,
+    silo_file_id INTEGER,
+    silo_item_id TEXT,
+    status TEXT NOT NULL CHECK(status IN ('mapped','not_found','stale','error')),
+    mapped_path TEXT NOT NULL,
+    updated_at INTEGER NOT NULL,
+    PRIMARY KEY(media_file_id, silo_server_key)
+  );
+
+  CREATE INDEX IF NOT EXISTS silo_file_mappings_status_idx
+    ON silo_file_mappings(status);`
 ] as const;

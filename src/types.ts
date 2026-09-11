@@ -61,6 +61,16 @@ export interface MediaItemRow {
   updated_at: number;
 }
 
+export interface SiloFileMappingRow {
+  media_file_id: string;
+  silo_server_key: string;
+  silo_file_id: number | null;
+  silo_item_id: string | null;
+  status: 'mapped' | 'not_found' | 'stale' | 'error';
+  mapped_path: string;
+  updated_at: number;
+}
+
 export interface ExternalSubtitleRow {
   id: string;
   media_file_id: string;

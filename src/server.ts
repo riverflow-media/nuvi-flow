@@ -21,6 +21,7 @@ import { MediaScanner } from './services/scanner.js';
 import { PlaybackSessionRegistry } from './services/playback/playback-sessions.js';
 import { RequestService } from './services/requester.js';
 import { SiloService } from './services/silo-service.js';
+import { SiloFileMappingStore } from './services/silo-file-mappings.js';
 import { SettingsService } from './services/settings.js';
 import { TmdbService } from './services/tmdb.js';
 
@@ -68,7 +69,8 @@ export async function buildApp(config: AppConfig): Promise<BuiltApp> {
   await app.register(rateLimit, { global: false, keyGenerator: (request) => request.ip });
   const database = new AppDatabase(config.databasePath);
   const settings = new SettingsService(database, config);
-  const silo = new SiloService(settings);
+  const siloMappings = new SiloFileMappingStore(database);
+  const silo = new SiloService(settings, siloMappings);
   const playbackSessions =
     new PlaybackSessionRegistry();
 
@@ -144,7 +146,8 @@ export async function buildApp(config: AppConfig): Promise<BuiltApp> {
     tmdb,
     requester,
     config,
-    app.log
+    app.log,
+    siloMappings
   );
 
   requester.setLibraryRescanHandler(

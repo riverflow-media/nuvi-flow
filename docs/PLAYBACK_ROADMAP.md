@@ -16,23 +16,29 @@ before its image is published.
 - Stable pseudonymous device identity carried in signed stream tokens, with
   explicit client identifiers preferred and non-invasive fallbacks
 - Build version and Git revision visibility in the admin server-status card
+- Persistent, server-scoped Silo file mappings with exact-path validation,
+  scan-time invalidation, deletion cleanup, and a verified pre-migration SQLite
+  backup
 
-## Current focus: persistent Silo file mapping
+## Current focus: conservative Auto playback policy
 
-- Persist the Nuvi-Flow media file ID and resolved Silo file ID
-- Store an optional Silo item ID, mapping status, mapped path, and update time
-- Prefer deterministic path mapping and refresh it during scans
-- Back up SQLite before applying the additive migration
+- Derive protocol-v3 capability requests from source media and known device
+  evidence rather than a fixed synthetic 1080p profile
+- Preserve source resolution, including 4K, when the device and transcoder path
+  can support it
+- Adapt audio independently so incompatible TrueHD or DTS audio does not force
+  an unnecessary video transcode
+- Preserve HDR when support is known and tone-map only when necessary
+- Keep unknown-device behavior conservative without automatically choosing the
+  lowest resolution
 
 ## Next milestones
 
-1. Conservative Auto playback policy with independent video, audio, HDR, and
-   subtitle decisions
-2. Streaming HLS proxy improvements, including URI attributes and nested
+1. Streaming HLS proxy improvements, including URI attributes and nested
    playlists
-3. Bounded automatic fallback using startup and throughput evidence
-4. Capability learning with confidence, counters, and decay
-5. Concurrency and transcoder-capacity controls
+2. Bounded automatic fallback using startup and throughput evidence
+3. Capability learning with confidence, counters, and decay
+4. Concurrency and transcoder-capacity controls
 
 ## Later interface work
 
@@ -41,3 +47,10 @@ before its image is published.
 - Keep system identity and health information together
 - Improve responsive navigation without mixing UI restructuring into playback
   reliability patches
+
+## Optional future features
+
+- Optional per-user Silo statistics integration. Keep the default single-user
+  setup unchanged; if enabled later, map distinct Nuvi-Flow playback users to
+  Silo profiles and bridge playback progress/completion so Silo can attribute
+  meaningful watch statistics per user.

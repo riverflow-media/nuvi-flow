@@ -61,7 +61,10 @@ describe('Silo service boundary', () => {
         tmdb_id: 123,
         metadata_json: '{}'
       },
-      { absolute_path: '/test-library/movies/Example Movie.mkv' },
+      {
+        id: 'file-1',
+        absolute_path: '/test-library/movies/Example Movie.mkv'
+      },
       'profile-1',
       '1080p-medium'
     );

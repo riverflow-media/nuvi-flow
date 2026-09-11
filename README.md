@@ -45,6 +45,11 @@ The current integration provides:
 - Original-file direct playback as the first stream option
 - An optional fixed-quality Silo HLS stream
 - Exact-path matching between Nuvi-Flow media files and Silo files
+- Persistent, Silo-server-scoped file mappings, so a resolved file ID is reused
+  across playback requests and Nuvi-Flow restarts
+- Automatic mapping invalidation when a scan detects that the local media file
+  changed, plus periodic revalidation; missing matches are retried rather than
+  permanently cached
 - Signed Nuvi-Flow URLs for Silo manifests and segments
 - Server-side Silo authentication
 - Concurrent playback-start coalescing
@@ -220,10 +225,16 @@ Default endpoints:
 `/app/data` contains:
 
 - SQLite database
+- Verified pre-migration SQLite backups created before upgrading an existing
+  database to a newer schema
 - Saved settings
 - Uploaded addon icon
 
 Do not delete this volume during normal upgrades if you want to preserve your configuration.
+
+Schema upgrades are additive and transactional. Before applying a pending
+migration to an existing database, Nuvi-Flow creates and integrity-checks a
+`media.db.backup-before-migration-*` file in the same data directory.
 
 ### Media mounts
 

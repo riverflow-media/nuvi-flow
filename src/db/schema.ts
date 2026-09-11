@@ -75,6 +75,19 @@ export const mediaFiles = sqliteTable('media_files', {
   index('media_files_status_idx').on(table.status)
 ]);
 
+export const siloFileMappings = sqliteTable('silo_file_mappings', {
+  mediaFileId: text('media_file_id').notNull().references(() => mediaFiles.id, { onDelete: 'cascade' }),
+  siloServerKey: text('silo_server_key').notNull(),
+  siloFileId: integer('silo_file_id'),
+  siloItemId: text('silo_item_id'),
+  status: text('status', { enum: ['mapped', 'not_found', 'stale', 'error'] }).notNull(),
+  mappedPath: text('mapped_path').notNull(),
+  updatedAt: integer('updated_at').notNull()
+}, (table) => [
+  uniqueIndex('silo_file_mappings_file_server_uq').on(table.mediaFileId, table.siloServerKey),
+  index('silo_file_mappings_status_idx').on(table.status)
+]);
+
 export const externalSubtitles = sqliteTable('external_subtitles', {
   id: text('id').primaryKey(),
   mediaFileId: text('media_file_id').notNull().references(() => mediaFiles.id, { onDelete: 'cascade' }),

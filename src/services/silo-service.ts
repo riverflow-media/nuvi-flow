@@ -1,11 +1,16 @@
 import type { MediaFileRow, MediaItemRow } from '../types.js';
 import {
   SiloClient,
+  siloContentId,
   type SiloEpisodeReference,
   type SiloHealth,
   type SiloPlaybackDecision,
   type SiloProfile
 } from './silo.js';
+import {
+  SiloFileMappingStore,
+  siloServerKey
+} from './silo-file-mappings.js';
 import type { SettingsService } from './settings.js';
 
 export interface SiloConnectionResult {
@@ -18,6 +23,9 @@ export interface SiloPlaybackResult {
   decision: SiloPlaybackDecision;
 }
 
+const MAPPED_FILE_REFRESH_MS = 24 * 60 * 60 * 1000;
+const MISSING_FILE_RETRY_MS = 60 * 1000;
+
 /**
  * Application-facing Silo boundary.
  *
@@ -27,7 +35,8 @@ export interface SiloPlaybackResult {
  */
 export class SiloService {
   constructor(
-    private readonly settings: SettingsService
+    private readonly settings: SettingsService,
+    private readonly mappings?: SiloFileMappingStore
   ) {}
 
   private client(
@@ -52,13 +61,66 @@ export class SiloService {
 
   async startPlaybackForMedia(
     item: Pick<MediaItemRow, 'type' | 'tmdb_id' | 'metadata_json'>,
-    file: Pick<MediaFileRow, 'absolute_path'>,
+    file: Pick<MediaFileRow, 'id' | 'absolute_path'>,
     profileId: string,
     qualityPreference: string,
     episode?: SiloEpisodeReference
   ): Promise<SiloPlaybackResult | null> {
     const client = this.client();
-    const fileId = await client.resolveFileId(item, file, episode);
+    const serverKey = siloServerKey(this.settings.siloUrl);
+    const existing = this.mappings?.get(file.id, serverKey);
+    const negativeCacheIsFresh = existing?.status === 'not_found' &&
+      existing.mapped_path === file.absolute_path &&
+      Date.now() - existing.updated_at < MISSING_FILE_RETRY_MS;
+    const mappedCacheIsFresh = existing?.status === 'mapped' &&
+      existing.mapped_path === file.absolute_path &&
+      Date.now() - existing.updated_at < MAPPED_FILE_REFRESH_MS;
+    let fileId = mappedCacheIsFresh
+      ? existing.silo_file_id
+      : null;
+
+    if (negativeCacheIsFresh) {
+      return null;
+    }
+
+    if (fileId === null) {
+      const contentId = siloContentId(item, episode);
+
+      if (!contentId) {
+        this.mappings?.record(
+          file.id,
+          serverKey,
+          file.absolute_path,
+          'not_found',
+          null,
+          null
+        );
+        return null;
+      }
+
+      try {
+        fileId = await client.resolveFileId(item, file, episode);
+      } catch (error) {
+        this.mappings?.record(
+          file.id,
+          serverKey,
+          file.absolute_path,
+          'error',
+          null,
+          contentId
+        );
+        throw error;
+      }
+
+      this.mappings?.record(
+        file.id,
+        serverKey,
+        file.absolute_path,
+        fileId === null ? 'not_found' : 'mapped',
+        fileId,
+        contentId
+      );
+    }
 
     if (fileId === null) {
       return null;

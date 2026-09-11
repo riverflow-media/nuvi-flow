@@ -11,6 +11,7 @@ export type SqliteDatabase = Database.Database;
 export class AppDatabase {
   readonly sqlite: SqliteDatabase;
   readonly orm;
+  lastMigrationBackupPath: string | null = null;
 
   constructor(databasePath: string) {
     fs.mkdirSync(path.dirname(databasePath), { recursive: true });
@@ -19,16 +20,27 @@ export class AppDatabase {
     this.sqlite.pragma('foreign_keys = ON');
     this.sqlite.pragma('busy_timeout = 5000');
     this.orm = drizzle(this.sqlite, { schema });
-    this.migrate();
+    this.migrate(databasePath);
   }
 
-  private migrate(): void {
+  private migrate(databasePath: string): void {
     this.sqlite.exec(`CREATE TABLE IF NOT EXISTS _migrations (
       id INTEGER PRIMARY KEY, applied_at INTEGER NOT NULL
     )`);
     const applied = new Set(
       this.sqlite.prepare('SELECT id FROM _migrations').all().map((row) => (row as { id: number }).id)
     );
+    const pending = migrations
+      .map((_sql, index) => index + 1)
+      .filter((id) => !applied.has(id));
+
+    if (applied.size > 0 && pending.length > 0) {
+      this.lastMigrationBackupPath = this.backupBeforeMigration(
+        databasePath,
+        pending[0]!
+      );
+    }
+
     migrations.forEach((sql, index) => {
       const id = index + 1;
       if (applied.has(id)) return;
@@ -37,6 +49,24 @@ export class AppDatabase {
         this.sqlite.prepare('INSERT INTO _migrations (id, applied_at) VALUES (?, ?)').run(id, Date.now());
       })();
     });
+  }
+
+  private backupBeforeMigration(databasePath: string, migrationId: number): string {
+    const backupPath = `${databasePath}.backup-before-migration-${migrationId}-${Date.now()}`;
+    const quotedPath = backupPath.replaceAll("'", "''");
+    this.sqlite.exec(`VACUUM INTO '${quotedPath}'`);
+
+    const backup = new Database(backupPath, { readonly: true });
+    try {
+      const result = backup.pragma('quick_check', { simple: true });
+      if (result !== 'ok') {
+        throw new Error('SQLite migration backup failed integrity verification.');
+      }
+    } finally {
+      backup.close();
+    }
+
+    return backupPath;
   }
 
   getSetting(key: string): string | undefined {

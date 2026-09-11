@@ -12,6 +12,7 @@ import type { MediaFileRow, MediaType } from '../types.js';
 import { inspectMedia } from './ffprobe.js';
 import type { RequestService } from './requester.js';
 import type { SettingsService } from './settings.js';
+import type { SiloFileMappingStore } from './silo-file-mappings.js';
 import type { TmdbService } from './tmdb.js';
 
 interface FoundFile { absolutePath: string; relativePath: string; type: MediaType; size: number; mtimeMs: number }
@@ -58,7 +59,8 @@ export class MediaScanner {
     private readonly tmdb: TmdbService,
     private readonly requester: RequestService,
     private readonly config: AppConfig,
-    private readonly logger: FastifyBaseLogger
+    private readonly logger: FastifyBaseLogger,
+    private readonly siloMappings?: SiloFileMappingStore
   ) {}
 
   scan(mode: ScanMode = 'changed'): Promise<void> {
@@ -162,6 +164,10 @@ export class MediaScanner {
   }
 
   private async processFile(file: FoundFile, existing: MediaFileRow | undefined, scanTime: number): Promise<'matched' | 'unmatched' | 'ignored'> {
+    const fileChanged = Boolean(existing) && (
+      existing!.size !== file.size ||
+      Math.abs(existing!.mtime_ms - file.mtimeMs) >= 1
+    );
     const parsedMovie = file.type === 'movie' ? parseMovieFilename(file.relativePath) : null;
     const parsedEpisode = file.type === 'series' ? parseEpisodeFilename(file.relativePath) : null;
     const parsedTitle = parsedMovie?.title || parsedEpisode?.title || path.basename(file.relativePath, path.extname(file.relativePath));
@@ -220,6 +226,7 @@ export class MediaScanner {
         parsedEpisode?.episodeStart ?? null, parsedEpisode?.episodeEnd ?? null, mediaItemId, confidence,
         existing?.manual_override ?? 0, status, probe.compatibilityWarning, null, existing?.added_at || now, now, scanTime
       );
+    if (fileChanged) this.siloMappings?.markStale(id);
     await this.updateExternalSubtitles(id, file);
     return status;
   }
