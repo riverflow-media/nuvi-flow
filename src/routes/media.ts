@@ -15,6 +15,7 @@ import {
   type PlaybackSessionResult
 } from '../services/playback/playback-sessions.js';
 import { deriveDeviceIdentity } from '../services/playback/device-identity.js';
+import { planSiloPlayback } from '../services/playback/playback-policy.js';
 import type { SiloService } from '../services/silo-service.js';
 import type { SettingsService } from '../services/settings.js';
 import type {
@@ -211,6 +212,11 @@ async function serveSiloStream(
     authorized.token!.deviceId
       ? 'signed_stream_token'
       : fallbackIdentity!.source;
+  const policy = planSiloPlayback(
+    authorized.file,
+    settings.siloTranscodeQuality,
+    deviceId
+  );
 
   let sessionResult: PlaybackSessionResult;
 
@@ -221,12 +227,11 @@ async function serveSiloStream(
           deviceId,
           mediaFileId: authorized.file.id,
           profileId: settings.siloProfileId,
-          mode: 'fixed-silo-hls',
-          quality:
-            settings.siloTranscodeQuality,
-          audioSelection: 'default',
+          mode: policy.mode,
+          quality: policy.requestProfile.qualityPreference,
+          audioSelection: 'conservative-aac-stereo',
           subtitleSelection: 'none',
-          dynamicRangeMode: 'sdr',
+          dynamicRangeMode: policy.target.dynamicRange,
           season: episode?.season,
           episode: episode?.episode
         },
@@ -238,7 +243,7 @@ async function serveSiloStream(
               item,
               authorized.file,
               settings.siloProfileId,
-              settings.siloTranscodeQuality,
+              policy.requestProfile,
               episode
             );
 
@@ -256,8 +261,10 @@ async function serveSiloStream(
           if (
             decision.outcome !== 'playable' ||
             !plan ||
-            plan.delivery !==
-              'server_transcode_hls' ||
+            ![
+              'server_remux_hls',
+              'server_transcode_hls'
+            ].includes(plan.delivery) ||
             plan.stream.protocol !== 'hls' ||
             !plan.stream.url.startsWith(
               '/playback/'
@@ -289,14 +296,25 @@ async function serveSiloStream(
               },
               decision: plan.delivery,
               target: {
-                quality:
-                  settings.siloTranscodeQuality,
-                video_codec: 'h264',
-                audio_codec: 'aac',
-                dynamic_range: 'sdr'
+                quality: policy.requestProfile.qualityPreference,
+                max_resolution: policy.target.maxResolution,
+                width: plan.effective_recipe?.width || null,
+                height: plan.effective_recipe?.height || null,
+                video_codec:
+                  plan.effective_recipe?.video_codec ||
+                  policy.target.videoCodec,
+                audio_codec:
+                  plan.effective_recipe?.audio_codec ||
+                  policy.target.audioCodec,
+                dynamic_range:
+                  plan.effective_recipe?.dynamic_range ||
+                  policy.target.dynamicRange
               },
-              reason:
-                'configured_silo_transcode',
+              reason: plan.decision_reason || policy.reason,
+              transformations:
+                plan.transformations?.map(
+                  transformation => transformation.name
+                ).filter(Boolean) || [],
               startup_ms:
                 Date.now() - startupStartedAt,
               fallback_attempt: 0

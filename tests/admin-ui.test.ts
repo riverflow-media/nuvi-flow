@@ -112,6 +112,23 @@ describe('media details modal', () => {
       .toBe('http://localhost:60500/addon/test-secure-install-token/manifest.json');
   });
 
+  it('presents Auto as the recommended Silo playback policy', () => {
+    const html = adminHtml('test-csrf');
+    const qualityOptions = html.match(
+      /<select id="siloTranscodeQuality"[\s\S]*?<\/select>/
+    )?.[0] || '';
+
+    expect(qualityOptions).toMatch(
+      /<option value="auto">[^<]*recommended<\/option>/
+    );
+    expect(qualityOptions.indexOf('value="auto"'))
+      .toBeLessThan(qualityOptions.indexOf('value="2160p-high"'));
+    expect(qualityOptions.match(/recommended/g)).toHaveLength(1);
+    expect(html).toContain(
+      'lets Silo choose HLS remux, audio-only conversion, or video transcode'
+    );
+  });
+
   it('regenerates the secure manifest URL with an explicit warning', async () => {
     const replacement = '/addon/replacement-secure-install-token';
     const fetchMock = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {

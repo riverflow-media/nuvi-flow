@@ -141,7 +141,7 @@ export class SettingsService {
       case '720p':
         return '720p-medium';
       default:
-        return value || '1080p-medium';
+        return value || 'auto';
     }
   }
 

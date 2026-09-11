@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { buildInfo } from '../lib/build-info.js';
 import type { MediaFileRow, MediaItemRow } from '../types.js';
+import type { SiloPlaybackRequestProfile } from './playback/playback-policy.js';
 
 export class SiloApiError extends Error {
   constructor(
@@ -64,6 +65,22 @@ export interface SiloPlaybackStream {
 export interface SiloPlaybackPlan {
   delivery: string;
   stream: SiloPlaybackStream;
+  decision_reason?: string;
+  effective_recipe?: {
+    video_codec?: string;
+    audio_codec?: string;
+    dynamic_range?: string;
+    width?: number;
+    height?: number;
+
+    [key: string]: unknown;
+  };
+  transformations?: Array<{
+    name?: string;
+    executor?: string;
+
+    [key: string]: unknown;
+  }>;
 
   [key: string]: unknown;
 }
@@ -97,59 +114,11 @@ interface SiloPlaybackStartRequest {
   progress_persistence: 'server' | 'client';
   metered: boolean;
 
-  client_capabilities: {
-    video_evidence: 'declared';
-    audio_evidence: 'declared';
-    codecs_video: string[];
-    codecs_video_hardware: string[];
-    codecs_audio: string[];
-    containers: string[];
-    max_resolution: string;
-    hdr: boolean;
-  };
-
+  client_capabilities: SiloPlaybackRequestProfile['clientCapabilities'];
   client_playback_context: {
     protocol_version: 3;
-    form_factor: string;
     app_version: string;
-
-    device: {
-      platform: string;
-      os_version: string;
-      manufacturer: string;
-      model: string;
-      platform_details: Record<string, string>;
-    };
-
-    output: {
-      output_context_id: string;
-    };
-
-    deliveries: {
-      hls: {
-        enabled: boolean;
-        supported_on_device: boolean;
-        containers: string[];
-        video_codecs: string[];
-        audio_decode_codecs: string[];
-        audio_passthrough_codecs: string[];
-
-        subtitles: {
-          embedded_text: boolean;
-          sidecar_text: boolean;
-          ass_styling: boolean;
-          embedded_bitmap: boolean;
-          sidecar_bitmap: boolean;
-          font_attachments: boolean;
-        };
-
-        features: string[];
-        auth_header_refresh: boolean;
-        validated_claims: string[];
-        transformations: unknown[];
-      };
-    };
-  };
+  } & SiloPlaybackRequestProfile['clientPlaybackContext'];
 }
 
 function seriesTvdbId(
@@ -382,7 +351,7 @@ export class SiloClient {
   startPlayback(
     fileId: number,
     profileId: string,
-    qualityPreference = '1080p-medium'
+    requestProfile: SiloPlaybackRequestProfile
   ): Promise<SiloPlaybackDecision> {
     const clientVersion = buildInfo().version;
     const body: SiloPlaybackStartRequest = {
@@ -398,92 +367,19 @@ export class SiloClient {
       profile_id: profileId,
       playback_attempt_id: randomUUID(),
 
-      quality_preference: qualityPreference,
+      quality_preference: requestProfile.qualityPreference,
       subtitle_fidelity_preference: 'compatible',
 
       start_position: 0,
       progress_persistence: 'client',
       metered: false,
 
-      client_capabilities: {
-        video_evidence: 'declared',
-        audio_evidence: 'declared',
-
-        codecs_video: [
-          'h264'
-        ],
-
-        codecs_video_hardware: [
-          'h264'
-        ],
-
-        codecs_audio: [
-          'aac'
-        ],
-
-        containers: [
-          'hls'
-        ],
-
-        max_resolution: '1080p',
-        hdr: false
-      },
+      client_capabilities: requestProfile.clientCapabilities,
 
       client_playback_context: {
         protocol_version: 3,
-        form_factor: 'tv',
         app_version: clientVersion,
-
-        device: {
-          platform: 'android',
-          os_version: '15',
-          manufacturer: 'Nuvi-Flow',
-          model: 'HLS Proxy',
-
-          platform_details: {
-            abis: 'arm64-v8a',
-            sdk_int: '35'
-          }
-        },
-
-        output: {
-          output_context_id: 'nuvi-flow'
-        },
-
-        deliveries: {
-          hls: {
-            enabled: true,
-            supported_on_device: true,
-
-            containers: [
-              'hls'
-            ],
-
-            video_codecs: [
-              'h264'
-            ],
-
-            audio_decode_codecs: [
-              'aac'
-            ],
-
-            audio_passthrough_codecs: [],
-
-            subtitles: {
-              embedded_text: false,
-              sidecar_text: true,
-              ass_styling: false,
-              embedded_bitmap: false,
-              sidecar_bitmap: false,
-              font_attachments: false
-            },
-
-            features: [],
-            auth_header_refresh: true,
-            validated_claims: [],
-            transformations: []
-          }
-        }
+        ...requestProfile.clientPlaybackContext
       }
     };
 

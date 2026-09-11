@@ -16,6 +16,7 @@ import type { MediaScanner } from '../services/scanner.js';
 import { RadarrClient } from '../services/radarr.js';
 import { SonarrClient } from '../services/sonarr.js';
 import type { SiloService } from '../services/silo-service.js';
+import { siloQualityPreferences } from '../services/playback/playback-policy.js';
 import type { RequestService } from '../services/requester.js';
 import type { SettingsService } from '../services/settings.js';
 import type { TmdbService } from '../services/tmdb.js';
@@ -685,18 +686,7 @@ export function registerAdminRoutes(
       const quality =
         body.siloTranscodeQuality.trim();
 
-      const allowedSiloQualities = new Set([
-        '2160p-high',
-        '2160p-medium',
-        '2160p-low',
-        '1080p-high',
-        '1080p-medium',
-        '1080p-low',
-        '720p-high',
-        '720p-medium',
-        '720p-low',
-        '480p'
-      ]);
+      const allowedSiloQualities = new Set<string>(siloQualityPreferences);
 
       if (!allowedSiloQualities.has(quality)) {
         return reply.code(400).send({

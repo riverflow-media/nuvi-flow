@@ -35,7 +35,7 @@ Symlinked media files are followed and scanned while the configured media direct
 
 ### Silo playback
 
-Nuvi-Flow can use a separate [Silo](https://github.com/Silo-Server/silo-server) server for authenticated HLS transcoding while keeping Silo credentials and internal container addresses away from Nuvio/Stremio clients.
+Nuvi-Flow can use a separate [Silo](https://github.com/Silo-Server/silo-server) server for authenticated HLS remuxing and transcoding while keeping Silo credentials and internal container addresses away from Nuvio/Stremio clients.
 
 See the [playback roadmap](docs/PLAYBACK_ROADMAP.md) for the staged reliability,
 device identity, Auto playback, proxy, and fallback work.
@@ -43,7 +43,12 @@ device identity, Auto playback, proxy, and fallback work.
 The current integration provides:
 
 - Original-file direct playback as the first stream option
-- An optional fixed-quality Silo HLS stream
+- An optional Silo Auto HLS stream that asks protocol v3 to preserve the source
+  resolution, including 4K, when viable
+- Conservative unknown-device declarations (H.264, AAC stereo, SDR) so Silo
+  can copy compatible video, adapt audio independently, or transcode video only
+  when required
+- Fixed quality rungs as administrator overrides
 - Exact-path matching between Nuvi-Flow media files and Silo files
 - Persistent, Silo-server-scoped file mappings, so a resolved file ID is reused
   across playback requests and Nuvi-Flow restarts
@@ -58,7 +63,15 @@ The current integration provides:
   allowing fresh URLs from the same identifiable device to reuse its session
 - A unique Nuvi-Flow playback ID in structured session logs and the `X-Nuvi-Flow-Playback-Id` response header
 
-Automatic per-device direct-play, remux, audio-only transcode, HDR, and quality fallback decisions are planned but are not part of the current fixed-quality integration.
+Auto currently targets the safe HLS proxy path and does not send a bandwidth
+estimate when none is known. Original-file direct playback remains the first
+stream option. Per-device capability learning, known-compatible HDR
+preservation, throughput-based fallback, and progressive/original Silo delivery
+remain later milestones.
+
+New installations default to Auto. An existing saved fixed quality remains an
+intentional override after upgrading; select **Auto** under **Settings → Silo**
+to use the new policy.
 
 Device identity prefers an explicit Nuvio/Stremio device header. When none is
 available, Nuvi-Flow hashes coarse client hints and network context together with
@@ -393,7 +406,7 @@ Common environment variables include:
 | `SILO_URL` | Internal Silo base URL, such as `http://silo:8080` |
 | `SILO_API_KEY` | Silo API key; never returned to the browser |
 | `SILO_PROFILE_ID` | Silo playback profile ID |
-| `SILO_TRANSCODE_QUALITY` | Fixed Silo quality rung used by the current integration |
+| `SILO_TRANSCODE_QUALITY` | Silo quality policy; `auto` (default) preserves source resolution when viable, while a named rung is a fixed override |
 
 Radarr, Sonarr, Silo, Anime root/profile selections, addon branding, and other runtime settings can be managed from the admin dashboard.
 

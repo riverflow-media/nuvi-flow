@@ -12,6 +12,7 @@ import {
   siloServerKey
 } from './silo-file-mappings.js';
 import type { SettingsService } from './settings.js';
+import type { SiloPlaybackRequestProfile } from './playback/playback-policy.js';
 
 export interface SiloConnectionResult {
   health: SiloHealth;
@@ -63,7 +64,7 @@ export class SiloService {
     item: Pick<MediaItemRow, 'type' | 'tmdb_id' | 'metadata_json'>,
     file: Pick<MediaFileRow, 'id' | 'absolute_path'>,
     profileId: string,
-    qualityPreference: string,
+    requestProfile: SiloPlaybackRequestProfile,
     episode?: SiloEpisodeReference
   ): Promise<SiloPlaybackResult | null> {
     const client = this.client();
@@ -131,7 +132,7 @@ export class SiloService {
       decision: await client.startPlayback(
         fileId,
         profileId,
-        qualityPreference
+        requestProfile
       )
     };
   }

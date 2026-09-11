@@ -10,6 +10,7 @@ import {
   SiloClient,
   siloContentId
 } from '../src/services/silo.js';
+import { planSiloPlayback } from '../src/services/playback/playback-policy.js';
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -149,7 +150,11 @@ describe('Silo integration', () => {
       await client.startPlayback(
         120,
         'profile-1',
-        '1080p-medium'
+        planSiloPlayback(
+          { width: 3840, height: 2160 },
+          'auto',
+          'device_1234567890abcdef12345678'
+        ).requestProfile
       );
 
     expect(result.outcome).toBe('playable');
@@ -212,7 +217,7 @@ describe('Silo integration', () => {
       protocol_version: 3,
       file_id: 120,
       profile_id: 'profile-1',
-      quality_preference: '1080p-medium',
+      quality_preference: 'auto',
       subtitle_fidelity_preference:
         'compatible',
       progress_persistence: 'client',
@@ -220,16 +225,27 @@ describe('Silo integration', () => {
         codecs_video: ['h264'],
         codecs_audio: ['aac'],
         containers: ['hls'],
-        max_resolution: '1080p',
+        max_resolution: '2160p',
         hdr: false
       },
       client_playback_context: {
         app_version: '1.2.3-test',
+        form_factor: 'unknown',
+        device: {
+          platform: 'server_proxy',
+          platform_details: {
+            policy: 'conservative_auto_v1'
+          }
+        },
+        output: {
+          output_context_id: 'device_1234567890abcdef12345678'
+        },
         deliveries: {
           hls: {
             enabled: true,
             supported_on_device: true,
-            auth_header_refresh: true
+            auth_header_refresh: true,
+            max_channels: 2
           }
         }
       }

@@ -100,7 +100,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     siloApiKey: env.SILO_API_KEY?.trim() || '',
     siloProfileId: env.SILO_PROFILE_ID?.trim() || '',
     siloTranscodeQuality:
-      env.SILO_TRANSCODE_QUALITY?.trim() || '1080p-medium'
+      env.SILO_TRANSCODE_QUALITY?.trim() || 'auto'
   };
 }
 

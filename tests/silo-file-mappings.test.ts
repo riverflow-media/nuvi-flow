@@ -6,6 +6,7 @@ import { AppDatabase } from '../src/db/index.js';
 import { SiloFileMappingStore, siloServerKey } from '../src/services/silo-file-mappings.js';
 import { SiloService } from '../src/services/silo-service.js';
 import type { SettingsService } from '../src/services/settings.js';
+import { planSiloPlayback } from '../src/services/playback/playback-policy.js';
 
 describe('persistent Silo file mappings', () => {
   let directory: string;
@@ -60,12 +61,17 @@ describe('persistent Silo file mappings', () => {
       absolute_path: '/test-library/Example Movie.mkv'
     };
     const item = { type: 'movie' as const, tmdb_id: 123, metadata_json: '{}' };
+    const requestProfile = planSiloPlayback(
+      { width: 1920, height: 1080 },
+      'auto',
+      'device_1234567890abcdef12345678'
+    ).requestProfile;
 
     await new SiloService(settings, mappings).startPlaybackForMedia(
-      item, media, 'profile-1', '1080p-medium'
+      item, media, 'profile-1', requestProfile
     );
     await new SiloService(settings, mappings).startPlaybackForMedia(
-      item, media, 'profile-1', '1080p-medium'
+      item, media, 'profile-1', requestProfile
     );
 
     expect(fetchMock.mock.calls.filter(([url]) => String(url).endsWith('/versions'))).toHaveLength(1);

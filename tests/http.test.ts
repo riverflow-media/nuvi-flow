@@ -127,7 +127,7 @@ describe('Stremio and media HTTP endpoints', () => {
     expect(other?.deviceId).not.toBe(first?.deviceId);
   });
 
-  it('adds a second Silo transcoded stream without changing direct playback', async () => {
+  it('adds a second Silo Auto stream without changing direct playback', async () => {
     built.settings.set(
       'siloProfileId',
       'profile-1'
@@ -156,9 +156,11 @@ describe('Stremio and media HTTP endpoints', () => {
       /^https:\/\/media\.example\.test\/silo-stream\//
     );
 
-    expect(streams[1].title).toContain(
-      'Silo'
-    );
+    expect(streams[1]).toMatchObject({
+      name: 'Silo Auto',
+      title: 'Silo Auto • up to 1080p • H.264/AAC compatibility',
+      description: 'Silo automatically chooses HLS remux, audio conversion, or video transcode'
+    });
   });
 
   it('serves exact partial content and invalid ranges', async () => {
@@ -345,6 +347,69 @@ describe('Stremio and media HTTP endpoints', () => {
     ).not.toContain(
       'test-silo-key'
     );
+  });
+
+  it('accepts an Auto HLS remux while retaining the 4K source ceiling', async () => {
+    built.settings.set('siloProfileId', 'profile-1');
+    built.settings.set('siloTranscodeQuality', 'auto');
+    built.database.sqlite.prepare(
+      "UPDATE media_files SET width=3840,height=2160,video_codec='h264',audio_codec='aac' WHERE id='file1'"
+    ).run();
+
+    const fetchMock = vi.fn().mockImplementation(async (url: string, init?: RequestInit) => {
+      if (url.endsWith('/versions')) {
+        return new Response(JSON.stringify([{
+          file_id: 120,
+          file_path: mediaPath
+        }]), { status: 200, headers: { 'Content-Type': 'application/json' } });
+      }
+      if (url.endsWith('/playback/start')) {
+        const body = JSON.parse(String(init?.body));
+        expect(body.quality_preference).toBe('auto');
+        expect(body.bandwidth_estimate_kbps).toBeUndefined();
+        expect(body.bandwidth_cap_kbps).toBeUndefined();
+        expect(body.client_capabilities).toMatchObject({
+          max_resolution: '2160p',
+          codecs_video: ['h264'],
+          codecs_audio: ['aac'],
+          hdr: false
+        });
+        expect(Object.keys(body.client_playback_context.deliveries)).toEqual(['hls']);
+        return new Response(JSON.stringify({
+          protocol_version: 3,
+          server_features: ['playback_plan_v3'],
+          outcome: 'playable',
+          session_id: 'remux-session',
+          playback_plan: {
+            delivery: 'server_remux_hls',
+            decision_reason: 'container_normalization',
+            effective_recipe: {
+              video_codec: 'h264',
+              audio_codec: 'aac',
+              dynamic_range: 'sdr',
+              width: 3840,
+              height: 2160
+            },
+            stream: {
+              url: '/playback/transcode/remux-session/master.m3u8',
+              protocol: 'hls',
+              headers: {},
+              header_refresh: 'none'
+            }
+          }
+        }), { status: 201, headers: { 'Content-Type': 'application/json' } });
+      }
+      return new Response(null, { status: 404 });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const response = await built.app.inject({
+      method: 'GET',
+      url: `/silo-stream/${encodeURIComponent(token())}`
+    });
+
+    expect(response.statusCode).toBe(302);
+    expect(response.headers.location).toMatch(/^\/silo-media\//);
   });
 
   it('coalesces simultaneous Silo playback requests and reuses the session', async () => {

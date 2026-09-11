@@ -248,8 +248,8 @@ export function adminHtml(csrf: string): string {
 </div>
 
 <div class="settings-section">
-  <h3>Silo · Transcoding</h3>
-  <p>Silo can provide an optional HLS transcode when direct playback is not ideal. The Silo API key is stored securely and is never returned to the browser.</p>
+  <h3>Silo · Playback</h3>
+  <p>Silo can provide optional HLS remuxing or transcoding when direct playback is not ideal. The Silo API key is stored securely and is never returned to the browser.</p>
 </div>
 
 <div class="field">
@@ -283,20 +283,21 @@ export function adminHtml(csrf: string): string {
 </div>
 
 <div class="field">
-  <label for="siloTranscodeQuality">Transcode quality</label>
+  <label for="siloTranscodeQuality">Playback quality</label>
   <select id="siloTranscodeQuality" class="select" name="siloTranscodeQuality">
+    <option value="auto">Auto · preserve resolution when viable · recommended</option>
     <option value="2160p-high">2160p · High · 40 Mbps</option>
     <option value="2160p-medium">2160p · Medium · 20 Mbps</option>
     <option value="2160p-low">2160p · Low · 10 Mbps</option>
     <option value="1080p-high">1080p · High · 10 Mbps</option>
-    <option value="1080p-medium">1080p · Medium · 6 Mbps · recommended</option>
+    <option value="1080p-medium">1080p · Medium · 6 Mbps</option>
     <option value="1080p-low">1080p · Low · 3 Mbps</option>
     <option value="720p-high">720p · High · 4 Mbps</option>
     <option value="720p-medium">720p · Medium · 2 Mbps</option>
     <option value="720p-low">720p · Low · 1.5 Mbps</option>
     <option value="480p">480p · 1.5 Mbps</option>
   </select>
-  <p class="help">The final codec, bitrate, audio layout, and HDR conversion are negotiated by Silo for the source file.</p>
+  <p class="help">Auto preserves source resolution when viable and lets Silo choose HLS remux, audio-only conversion, or video transcode. Fixed rungs remain available as an administrator override.</p>
 </div>
 
 <div class="settings-section">

@@ -21,6 +21,7 @@ import type { AppConfig } from '../config.js';
 import { matchesAddonAccessToken } from '../lib/addon-access.js';
 import { buildInfo } from '../lib/build-info.js';
 import { deriveDeviceIdentity } from '../services/playback/device-identity.js';
+import { planSiloPlayback } from '../services/playback/playback-policy.js';
 
 const manifest = {
   id: 'community.nuviflow',
@@ -251,13 +252,21 @@ export function registerStremioRoutes(
           siloPayload.exp,
           Date.now()
         );
+      const siloPolicy = planSiloPlayback(
+        file,
+        settings.siloTranscodeQuality,
+        deviceIdentity.id
+      );
+      const auto = siloPolicy.mode === 'auto-silo-hls';
 
       const siloStream = {
-        name: 'Silo Transcode',
-        title:
-          `Silo • ${settings.siloTranscodeQuality} • H.264 • AAC`,
-        description:
-          'Server-transcoded HLS via Silo',
+        name: auto ? 'Silo Auto' : 'Silo Transcode',
+        title: auto
+          ? `Silo Auto • up to ${siloPolicy.target.maxResolution} • H.264/AAC compatibility`
+          : `Silo • ${siloPolicy.requestProfile.qualityPreference} • compatibility HLS`,
+        description: auto
+          ? 'Silo automatically chooses HLS remux, audio conversion, or video transcode'
+          : 'Fixed-quality HLS planned by Silo',
         url:
           `${settings.baseUrl}/silo-stream/${encodeURIComponent(siloToken)}`,
         subtitles: subtitles.map((subtitle) => ({

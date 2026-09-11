@@ -7,6 +7,7 @@ import {
 } from 'vitest';
 import { SiloService } from '../src/services/silo-service.js';
 import type { SettingsService } from '../src/services/settings.js';
+import { planSiloPlayback } from '../src/services/playback/playback-policy.js';
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -66,7 +67,11 @@ describe('Silo service boundary', () => {
         absolute_path: '/test-library/movies/Example Movie.mkv'
       },
       'profile-1',
-      '1080p-medium'
+      planSiloPlayback(
+        { width: 1920, height: 1080 },
+        'auto',
+        'device_1234567890abcdef12345678'
+      ).requestProfile
     );
 
     expect(result).toMatchObject({
