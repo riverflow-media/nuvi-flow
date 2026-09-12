@@ -78,9 +78,60 @@ describe('conservative Silo playback policy', () => {
     ).target.maxResolution).toBe('720p');
   });
 
+  it('offers scanned source traits to original playback before compatibility conversion', () => {
+    const plan = planSiloPlayback(
+      {
+        width: 1920,
+        height: 1080,
+        relative_path: 'The Return of the King (2003).mkv',
+        video_codec: 'h264',
+        audio_codec: 'truehd',
+        audio_channels: 8
+      },
+      'auto',
+      deviceId
+    );
+
+    expect(plan.reason).toBe('source_direct_first');
+    expect(plan.requestProfile.clientCapabilities).toMatchObject({
+      codecs_video: ['h264'],
+      codecs_audio: ['aac', 'truehd'],
+      containers: ['mp4', 'mkv', 'hls']
+    });
+    expect(plan.requestProfile.clientPlaybackContext.deliveries).toMatchObject({
+      original_http: {
+        containers: ['mp4', 'mkv'],
+        video_codecs: ['h264'],
+        audio_decode_codecs: ['aac', 'truehd'],
+        max_channels: 8
+      },
+      progressive: {
+        containers: ['mp4'],
+        video_codecs: ['h264'],
+        audio_decode_codecs: ['aac'],
+        max_channels: 2
+      },
+      hls: {
+        containers: ['hls'],
+        video_codecs: ['h264'],
+        audio_decode_codecs: ['aac'],
+        max_channels: 2
+      }
+    });
+    expect(
+      plan.requestProfile.clientPlaybackContext.device.platform_details.policy
+    ).toBe('source_direct_first_v1');
+  });
+
   it('preserves a valid administrator fixed-quality override', () => {
     const plan = planSiloPlayback(
-      { width: 3840, height: 2160 },
+      {
+        width: 3840,
+        height: 2160,
+        relative_path: 'Example.mkv',
+        video_codec: 'hevc',
+        audio_codec: 'truehd'
+      },
       '1080p-medium',
       deviceId
     );
@@ -90,6 +141,8 @@ describe('conservative Silo playback policy', () => {
     expect(Object.keys(plan.requestProfile.clientPlaybackContext.deliveries))
       .toEqual(['hls']);
     expect(plan.requestProfile.clientCapabilities.containers).toEqual(['hls']);
+    expect(plan.requestProfile.clientCapabilities.codecs_video).toEqual(['h264']);
+    expect(plan.requestProfile.clientCapabilities.codecs_audio).toEqual(['aac']);
   });
 
   it('uses only explicit supported overrides as device capability claims', () => {

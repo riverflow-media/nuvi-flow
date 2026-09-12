@@ -306,7 +306,7 @@ export function adminHtml(csrf: string): string {
     <option value="true">Show alongside Auto</option>
     <option value="false">Hide when Silo is available</option>
   </select>
-  <p class="help">Hiding this entry leaves only the Silo-planned stream. Auto can still select byte-for-byte original playback when the device declarations match; Direct remains available automatically if Silo is not configured.</p>
+  <p class="help">This only hides the extra menu entry. Auto still gives byte-for-byte original playback first priority, then asks Silo to remux or transcode only when conversion is needed. Direct remains available automatically if Silo is not configured.</p>
 </div>
 
 <div class="settings-section">

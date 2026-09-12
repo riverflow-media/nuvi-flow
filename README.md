@@ -48,11 +48,13 @@ The current integration provides:
 - Source-resolution preservation, including 4K, when the declared device
   capabilities and Silo route allow it; Auto has no machine-specific 1080p cap
 - An optional separate Direct Play entry, shown by default and hideable under
-  **Settings → Silo**. If Silo is unavailable, Direct is always retained so the
-  addon never returns an empty playback choice
-- Conservative unknown-device declarations (H.264, AAC stereo, SDR) so Silo
-  can copy compatible video, adapt audio independently, or transcode video only
-  when required
+  **Settings → Silo**. This is display-only: Auto still gives the scanned
+  source's byte-for-byte original route first priority. If Silo is unavailable,
+  Direct is always retained so the addon never returns an empty playback choice
+- Source-aware original negotiation in Auto, followed by conservative H.264,
+  AAC stereo, and SDR compatibility routes. This avoids consuming transcoder
+  resources for files the player can already handle while keeping remux and
+  transcode available when conversion is needed
 - Fixed quality rungs as administrator overrides
 - Exact-path matching between Nuvi-Flow media files and Silo files
 - Persistent, Silo-server-scoped file mappings, so a resolved file ID is reused
@@ -87,12 +89,12 @@ The current integration provides:
   providing the evidence needed for bounded quality fallback without log floods
 - A unique Nuvi-Flow playback ID in structured session logs and the `X-Nuvi-Flow-Playback-Id` response header
 
-Auto does not send a bandwidth estimate when none is known. Unknown devices
-conservatively expose original/progressive playback only for MP4/H.264/AAC/SDR;
-HLS remains the compatibility route. Explicit supported overrides can widen the
-device declaration, but automatic learning and its admin controls are not enabled
-yet. Known-compatible HDR preservation and automatic runtime fallback remain
-later milestones.
+Auto does not send a bandwidth estimate when none is known. It offers the
+scanned source container and primary codecs to the original route first, while
+progressive/HLS conversion retains conservative compatibility targets. Explicit
+supported overrides can widen those targets, but automatic learning and its
+admin controls are not enabled yet. Known-compatible HDR preservation and
+automatic runtime fallback remain later milestones.
 
 Streaming removes Nuvi-Flow's previous segment-sized startup delay and memory
 buffer. Nuvi-Flow now measures upstream response latency and repeated slow

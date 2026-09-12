@@ -73,7 +73,10 @@ export interface SiloDeliveryCapability {
 
 export interface PlaybackPolicyPlan {
   mode: 'auto-silo' | 'fixed-silo-hls';
-  reason: 'conservative_unknown_device' | 'explicit_device_overrides';
+  reason:
+    | 'conservative_unknown_device'
+    | 'source_direct_first'
+    | 'explicit_device_overrides';
   requestProfile: SiloPlaybackRequestProfile;
   target: {
     maxResolution: string;
@@ -84,8 +87,47 @@ export interface PlaybackPolicyPlan {
   };
 }
 
+type PlaybackSource = Pick<MediaFileRow, 'width' | 'height'> &
+  Partial<Pick<
+    MediaFileRow,
+    'relative_path' | 'video_codec' | 'audio_codec' | 'audio_channels'
+  >>;
+
+function sourceContainer(file: PlaybackSource): string | null {
+  const extension = file.relative_path?.split('.').pop()?.toLowerCase();
+
+  if (extension === 'mkv' || extension === 'mk3d') return 'mkv';
+  if (extension === 'mp4' || extension === 'm4v') return 'mp4';
+  if (extension === 'webm') return 'webm';
+  if (['ts', 'm2ts', 'mts'].includes(extension || '')) return 'mpegts';
+  return null;
+}
+
+function sourceVideoCodec(value: string | null | undefined): string | null {
+  const codec = value?.trim().toLowerCase();
+
+  if (['h264', 'avc', 'avc1'].includes(codec || '')) return 'h264';
+  if (['hevc', 'h265', 'hev1', 'hvc1'].includes(codec || '')) return 'hevc';
+  if (['av1', 'av01'].includes(codec || '')) return 'av1';
+  if (['vp9', 'vp09'].includes(codec || '')) return 'vp9';
+  return null;
+}
+
+function sourceAudioCodec(value: string | null | undefined): string | null {
+  const codec = value?.trim().toLowerCase();
+
+  if (['aac', 'mp4a'].includes(codec || '')) return 'aac';
+  if (['ac3', 'ac-3'].includes(codec || '')) return 'ac3';
+  if (['eac3', 'e-ac-3'].includes(codec || '')) return 'eac3';
+  if (codec === 'opus') return 'opus';
+  if (['dts', 'dca'].includes(codec || '')) return 'dts';
+  if (['dts-hd', 'dts_hd'].includes(codec || '')) return 'dts-hd';
+  if (['truehd', 'mlp'].includes(codec || '')) return 'truehd';
+  return null;
+}
+
 function sourceResolutionCeiling(
-  file: Pick<MediaFileRow, 'width' | 'height'>
+  file: PlaybackSource
 ): string {
   const width = file.width || 0;
   const height = file.height || 0;
@@ -108,17 +150,20 @@ export function normalizeSiloQualityPreference(
  * Initial policy for devices without measured capabilities.
  *
  * Auto offers Silo's original, progressive-remux, and HLS delivery classes.
- * Unknown devices still declare only conservative MP4/H.264/AAC/SDR support;
- * explicit user overrides can widen those claims. A fixed quality intentionally
- * offers only HLS so the administrator's requested encode rung remains binding.
+ * Its original route includes the scanned source traits so Silo can try the
+ * byte-for-byte file before spending resources on conversion. Progressive and
+ * HLS retain conservative compatibility targets, while explicit device
+ * overrides can widen them. A fixed quality intentionally offers only HLS so
+ * the administrator's requested encode rung remains binding.
  */
 export function planSiloPlayback(
-  file: Pick<MediaFileRow, 'width' | 'height'>,
+  file: PlaybackSource,
   configuredQuality: string,
   deviceId: string,
   capabilitySnapshot?: DeviceCapabilitySnapshot
 ): PlaybackPolicyPlan {
   const qualityPreference = normalizeSiloQualityPreference(configuredQuality);
+  const auto = qualityPreference === 'auto';
   const maxResolution = sourceResolutionCeiling(file);
   const userOverrides = capabilitySnapshot?.capabilities.filter(
     capability => capability.evidence === 'user_override' && capability.supported
@@ -160,18 +205,35 @@ export function planSiloPlayback(
   const videoCodecs = [...supportedVideoCodecs];
   const audioCodecs = [...supportedAudioCodecs];
   const containers = [...supportedContainers];
+  const directVideoCodecs = new Set(videoCodecs);
+  const directAudioCodecs = new Set(audioCodecs);
+  const directContainers = new Set(containers);
+  const scannedVideoCodec = auto ? sourceVideoCodec(file.video_codec) : null;
+  const scannedAudioCodec = auto ? sourceAudioCodec(file.audio_codec) : null;
+  const scannedContainer = auto ? sourceContainer(file) : null;
+
+  if (scannedVideoCodec) directVideoCodecs.add(scannedVideoCodec);
+  if (scannedAudioCodec) directAudioCodecs.add(scannedAudioCodec);
+  if (scannedContainer) directContainers.add(scannedContainer);
+
+  const usedSourceHints = Boolean(
+    scannedVideoCodec || scannedAudioCodec || scannedContainer
+  );
   const usedOverrides = videoCodecs.length > 1 ||
     audioCodecs.length > 1 || containers.length > 1 || hdr;
   const deliveryCapability = (
-    deliveryContainers: string[]
+    deliveryContainers: string[],
+    deliveryVideoCodecs = videoCodecs,
+    deliveryAudioCodecs = audioCodecs,
+    maxChannels = 2
   ): SiloDeliveryCapability => ({
     enabled: true,
     supported_on_device: true,
     containers: deliveryContainers,
-    video_codecs: videoCodecs,
-    audio_decode_codecs: audioCodecs,
+    video_codecs: deliveryVideoCodecs,
+    audio_decode_codecs: deliveryAudioCodecs,
     audio_passthrough_codecs: [],
-    max_channels: 2,
+    max_channels: maxChannels,
     subtitles: {
       embedded_text: false,
       sidecar_text: true,
@@ -187,11 +249,19 @@ export function planSiloPlayback(
   });
   const hls = deliveryCapability(['hls']);
   const autoDeliveries = {
-    original_http: deliveryCapability(containers),
-    progressive: deliveryCapability(['mp4']),
+    original_http: deliveryCapability(
+      [...directContainers],
+      [...directVideoCodecs],
+      [...directAudioCodecs],
+      Math.max(2, file.audio_channels || 0)
+    ),
+    progressive: deliveryCapability(
+      ['mp4'],
+      [...directVideoCodecs],
+      audioCodecs
+    ),
     hls
   };
-  const auto = qualityPreference === 'auto';
 
   return {
     mode: auto
@@ -199,16 +269,18 @@ export function planSiloPlayback(
       : 'fixed-silo-hls',
     reason: usedOverrides
       ? 'explicit_device_overrides'
-      : 'conservative_unknown_device',
+      : usedSourceHints
+        ? 'source_direct_first'
+        : 'conservative_unknown_device',
     requestProfile: {
       qualityPreference,
       clientCapabilities: {
         video_evidence: 'declared',
         audio_evidence: 'declared',
-        codecs_video: videoCodecs,
-        codecs_video_hardware: videoCodecs,
-        codecs_audio: audioCodecs,
-        containers: auto ? [...containers, 'hls'] : ['hls'],
+        codecs_video: auto ? [...directVideoCodecs] : videoCodecs,
+        codecs_video_hardware: auto ? [...directVideoCodecs] : videoCodecs,
+        codecs_audio: auto ? [...directAudioCodecs] : audioCodecs,
+        containers: auto ? [...directContainers, 'hls'] : ['hls'],
         max_resolution: maxResolution,
         hdr
       },
@@ -222,7 +294,9 @@ export function planSiloPlayback(
           platform_details: {
             policy: usedOverrides
               ? 'explicit_overrides_v1'
-              : 'conservative_auto_v1'
+              : usedSourceHints
+                ? 'source_direct_first_v1'
+                : 'conservative_auto_v1'
           }
         },
         output: {

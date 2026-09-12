@@ -187,6 +187,84 @@ describe('Stremio and media HTTP endpoints', () => {
     expect(withoutSilo.json().streams[0].url).toMatch(/\/media\//);
   });
 
+  it('keeps Auto direct-first when the separate Direct entry is hidden', async () => {
+    built.settings.set('siloProfileId', 'profile-1');
+    built.settings.set('siloTranscodeQuality', 'auto');
+    built.settings.set('showDirectPlay', 'false');
+    built.database.sqlite.prepare(
+      `UPDATE media_files
+       SET relative_path='The Return of the King (2003).mkv',
+           video_codec='h264',audio_codec='truehd',audio_channels=8
+       WHERE id='file1'`
+    ).run();
+
+    const fetchMock = vi.fn().mockImplementation(async (
+      url: string,
+      init?: RequestInit
+    ) => {
+      if (url.endsWith('/versions')) {
+        return new Response(JSON.stringify([{
+          file_id: 120,
+          file_path: mediaPath
+        }]), { status: 200, headers: { 'Content-Type': 'application/json' } });
+      }
+      if (url.endsWith('/playback/start')) {
+        const body = JSON.parse(String(init?.body));
+        expect(body.quality_preference).toBe('auto');
+        expect(body.client_capabilities).toMatchObject({
+          codecs_video: ['h264'],
+          codecs_audio: ['aac', 'truehd'],
+          containers: ['mp4', 'mkv', 'hls']
+        });
+        expect(body.client_playback_context.deliveries.original_http)
+          .toMatchObject({
+            containers: ['mp4', 'mkv'],
+            audio_decode_codecs: ['aac', 'truehd'],
+            max_channels: 8
+          });
+        expect(body.client_playback_context.deliveries.hls)
+          .toMatchObject({
+            containers: ['hls'],
+            audio_decode_codecs: ['aac'],
+            max_channels: 2
+          });
+        return new Response(JSON.stringify({
+          protocol_version: 3,
+          server_features: ['playback_plan_v3'],
+          outcome: 'playable',
+          session_id: 'direct-first-session',
+          playback_plan: {
+            delivery: 'original_http',
+            decision_reason: 'original_compatible',
+            stream: {
+              url: '/stream/direct-first-session',
+              protocol: 'http_progressive',
+              headers: {},
+              header_refresh: 'none'
+            }
+          }
+        }), { status: 201, headers: { 'Content-Type': 'application/json' } });
+      }
+      return new Response(null, { status: 404 });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const listed = await built.app.inject({
+      method: 'GET',
+      url: addonUrl('/stream/movie/tt1234567.json')
+    });
+    expect(listed.json().streams).toHaveLength(1);
+    expect(listed.json().streams[0].name).toBe('Nuvi-Flow Auto');
+
+    const autoPath = new URL(listed.json().streams[0].url).pathname;
+    const planned = await built.app.inject({ method: 'GET', url: autoPath });
+    expect(planned.statusCode).toBe(302);
+    expect(planned.headers.location).toMatch(/^\/silo-media\//);
+    expect(fetchMock.mock.calls.filter(([url]) =>
+      String(url).endsWith('/playback/start')
+    )).toHaveLength(1);
+  });
+
   it('serves exact partial content and invalid ranges', async () => {
     const valid = await built.app.inject({ method: 'GET', url: `/media/${encodeURIComponent(token())}`, headers: { range: 'bytes=10-19' } });
     expect(valid.statusCode).toBe(206);

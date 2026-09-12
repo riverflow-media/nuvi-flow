@@ -52,13 +52,16 @@ before its image is published.
   missing bandwidth estimate as zero or unlimited
 - Auto negotiates original HTTP, progressive remux, HLS remux, and HLS
   transcode, allowing Silo to choose the least expensive compatible route
-- Unknown devices conservatively declare MP4, H.264, AAC stereo, and SDR for
-  original/progressive delivery; HLS remains the compatibility route
+- Auto offers the scanned source container and primary codecs to original HTTP
+  first, even when the separate Direct entry is hidden. Progressive and HLS
+  retain conservative H.264/AAC stereo compatibility targets so conversion is
+  still available when needed
 - Fixed quality rungs remain explicit HLS-only administrator overrides
 - Progressive streams retain byte-range metadata and are not terminated by the
   media client's connection-start timeout
 - The separate Direct Play stream can be hidden without disabling original
-  playback inside Auto; it remains available whenever Silo is unavailable
+  playback or changing its priority inside Auto; it remains available whenever
+  Silo is unavailable
 
 Known HDR support is not inferred. HDR preservation will be enabled only after
 capability evidence exists; until then Silo may tone-map incompatible HDR to
