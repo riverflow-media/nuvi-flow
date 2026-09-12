@@ -47,7 +47,7 @@ describe('admin media detail API', () => {
     fs.rmSync(directory, { recursive: true, force: true });
   });
 
-  function request(method: 'GET' | 'POST' | 'PATCH', url: string, payload?: unknown) {
+  function request(method: 'GET' | 'POST' | 'PUT' | 'PATCH', url: string, payload?: unknown) {
     return built.app.inject({ method, url, headers: { cookie, 'x-csrf-token': csrf }, payload });
   }
 
@@ -119,6 +119,28 @@ describe('admin media detail API', () => {
         primary: true
       }]
     });
+  });
+
+  it('persists the separate Direct Play visibility setting', async () => {
+    const currentSettings = Object.fromEntries(
+      Object.entries(built.settings.publicView())
+        .map(([key, value]) => [key, String(value)])
+    );
+    const hidden = await request('PUT', '/admin/api/settings', {
+      ...currentSettings,
+      showDirectPlay: 'false'
+    });
+
+    expect(hidden.statusCode).toBe(200);
+    expect(hidden.json().settings.showDirectPlay).toBe(false);
+    expect(built.settings.showDirectPlay).toBe(false);
+
+    const shown = await request('PUT', '/admin/api/settings', {
+      ...currentSettings,
+      showDirectPlay: 'true'
+    });
+    expect(shown.statusCode).toBe(200);
+    expect(shown.json().settings.showDirectPlay).toBe(true);
   });
 
   it('returns coherent current-match details and updates action state', async () => {

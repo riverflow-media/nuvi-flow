@@ -257,15 +257,15 @@ export function registerStremioRoutes(
         settings.siloTranscodeQuality,
         deviceIdentity.id
       );
-      const auto = siloPolicy.mode === 'auto-silo-hls';
+      const auto = siloPolicy.mode === 'auto-silo';
 
       const siloStream = {
-        name: auto ? 'Silo Auto' : 'Silo Transcode',
+        name: auto ? 'Nuvi-Flow Auto' : 'Silo Transcode',
         title: auto
-          ? `Silo Auto • up to ${siloPolicy.target.maxResolution} • H.264/AAC compatibility`
+          ? `Auto • up to ${siloPolicy.target.maxResolution} • direct/remux/transcode`
           : `Silo • ${siloPolicy.requestProfile.qualityPreference} • compatibility HLS`,
         description: auto
-          ? 'Silo automatically chooses HLS remux, audio conversion, or video transcode'
+          ? 'Chooses the highest compatible Silo route, including original playback'
           : 'Fixed-quality HLS planned by Silo',
         url:
           `${settings.baseUrl}/silo-stream/${encodeURIComponent(siloToken)}`,
@@ -284,10 +284,9 @@ export function registerStremioRoutes(
         }
       };
 
-      return [
-        directStream,
-        siloStream
-      ];
+      return settings.showDirectPlay
+        ? [directStream, siloStream]
+        : [siloStream];
     });
     reply.header('Cache-Control', 'no-store').send({ streams });
   });

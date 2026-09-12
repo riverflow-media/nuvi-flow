@@ -40,6 +40,7 @@ export interface AppConfig {
   siloApiKey: string;
   siloProfileId: string;
   siloTranscodeQuality: string;
+  showDirectPlay: boolean;
 }
 
 function numberValue(value: string | undefined, fallback: number, minimum = 0): number {
@@ -100,7 +101,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     siloApiKey: env.SILO_API_KEY?.trim() || '',
     siloProfileId: env.SILO_PROFILE_ID?.trim() || '',
     siloTranscodeQuality:
-      env.SILO_TRANSCODE_QUALITY?.trim() || 'auto'
+      env.SILO_TRANSCODE_QUALITY?.trim() || 'auto',
+    showDirectPlay: booleanValue(env.SHOW_DIRECT_PLAY, true)
   };
 }
 

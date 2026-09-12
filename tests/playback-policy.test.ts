@@ -1,8 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   normalizeSiloQualityPreference,
-  planSiloPlayback,
-  selectAutoTranscodeFallback
+  planSiloPlayback
 } from '../src/services/playback/playback-policy.js';
 
 describe('conservative Silo playback policy', () => {
@@ -16,7 +15,7 @@ describe('conservative Silo playback policy', () => {
     );
 
     expect(plan).toMatchObject({
-      mode: 'auto-silo-hls',
+      mode: 'auto-silo',
       reason: 'conservative_unknown_device',
       target: {
         maxResolution: '2160p',
@@ -33,13 +32,27 @@ describe('conservative Silo playback policy', () => {
           codecs_video: ['h264'],
           codecs_video_hardware: ['h264'],
           codecs_audio: ['aac'],
-          containers: ['hls'],
+          containers: ['mp4', 'hls'],
           max_resolution: '2160p',
           hdr: false
         },
         clientPlaybackContext: {
           output: { output_context_id: deviceId },
           deliveries: {
+            original_http: {
+              enabled: true,
+              supported_on_device: true,
+              containers: ['mp4'],
+              video_codecs: ['h264'],
+              audio_decode_codecs: ['aac']
+            },
+            progressive: {
+              enabled: true,
+              supported_on_device: true,
+              containers: ['mp4'],
+              video_codecs: ['h264'],
+              audio_decode_codecs: ['aac']
+            },
             hls: {
               enabled: true,
               supported_on_device: true,
@@ -53,7 +66,7 @@ describe('conservative Silo playback policy', () => {
       }
     });
     expect(Object.keys(plan.requestProfile.clientPlaybackContext.deliveries))
-      .toEqual(['hls']);
+      .toEqual(['original_http', 'progressive', 'hls']);
   });
 
   it('uses the source resolution class for smaller media', () => {
@@ -74,6 +87,9 @@ describe('conservative Silo playback policy', () => {
 
     expect(plan.mode).toBe('fixed-silo-hls');
     expect(plan.requestProfile.qualityPreference).toBe('1080p-medium');
+    expect(Object.keys(plan.requestProfile.clientPlaybackContext.deliveries))
+      .toEqual(['hls']);
+    expect(plan.requestProfile.clientCapabilities.containers).toEqual(['hls']);
   });
 
   it('uses only explicit supported overrides as device capability claims', () => {
@@ -96,6 +112,11 @@ describe('conservative Silo playback policy', () => {
             failureCount: 0, firstObservedAt: 1, lastObservedAt: 1, updatedAt: 1
           },
           {
+            category: 'container', capability: 'mkv', supported: true,
+            evidence: 'user_override', confidence: 1, successCount: 0,
+            failureCount: 0, firstObservedAt: 1, lastObservedAt: 1, updatedAt: 1
+          },
+          {
             category: 'audio_codec', capability: 'truehd', supported: true,
             evidence: 'observed_success', confidence: .9, successCount: 3,
             failureCount: 0, firstObservedAt: 1, lastObservedAt: 1, updatedAt: 1
@@ -108,8 +129,13 @@ describe('conservative Silo playback policy', () => {
     expect(plan.requestProfile.clientCapabilities).toMatchObject({
       codecs_video: ['h264', 'hevc'],
       codecs_audio: ['aac'],
+      containers: ['mp4', 'mkv', 'hls'],
       hdr: true
     });
+    expect(
+      plan.requestProfile.clientPlaybackContext.deliveries.original_http
+        ?.containers
+    ).toEqual(['mp4', 'mkv']);
     expect(plan.target.dynamicRange).toBe('hdr');
   });
 
@@ -117,30 +143,12 @@ describe('conservative Silo playback policy', () => {
     expect(normalizeSiloQualityPreference('not-a-rung')).toBe('auto');
   });
 
-  it('prefers the sustainable 1080p fallback for a full 4K Auto encode', () => {
-    expect(selectAutoTranscodeFallback('auto', {
-      delivery: 'server_transcode_hls',
-      effective_recipe: { height: 2160 },
-      available_qualities: [
-        { label: 'original' },
-        { label: '2160p-high' },
-        { label: '1080p-high' },
-        { label: '1080p-medium' },
-        { label: '720p-high' }
-      ]
-    })).toBe('1080p-medium');
-  });
+  it('does not impose a hardware-specific 1080p ceiling on Auto', () => {
+    const plan = planSiloPlayback(
+      { width: 3840, height: 2160 }, 'auto', deviceId
+    );
 
-  it('retains 4K remuxes and administrator fixed-quality choices', () => {
-    const plan = {
-      delivery: 'server_remux_hls',
-      effective_recipe: { height: 2160 },
-      available_qualities: [{ label: '1080p-high' }]
-    };
-    expect(selectAutoTranscodeFallback('auto', plan)).toBeNull();
-    expect(selectAutoTranscodeFallback('2160p-high', {
-      ...plan,
-      delivery: 'server_transcode_hls'
-    })).toBeNull();
+    expect(plan.requestProfile.qualityPreference).toBe('auto');
+    expect(plan.target.maxResolution).toBe('2160p');
   });
 });

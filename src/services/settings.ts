@@ -145,6 +145,10 @@ export class SettingsService {
     }
   }
 
+  get showDirectPlay(): boolean {
+    return this.boolean('showDirectPlay', this.defaults.showDirectPlay);
+  }
+
   private number(key: string, fallback: number, minimum: number): number {
     const parsed = Number(this.database.getSetting(key));
     return Number.isFinite(parsed) && parsed >= minimum ? parsed : fallback;
@@ -201,7 +205,8 @@ export class SettingsService {
       siloUrl: this.siloUrl,
       siloConfigured: Boolean(this.siloApiKey),
       siloProfileId: this.siloProfileId,
-      siloTranscodeQuality: this.siloTranscodeQuality
+      siloTranscodeQuality: this.siloTranscodeQuality,
+      showDirectPlay: this.showDirectPlay
     };
   }
 }

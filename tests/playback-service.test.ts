@@ -23,7 +23,11 @@ describe('playback orchestration', () => {
   it('loads capability evidence and preserves single-flight session reuse', async () => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'nuvi-playback-service-'));
     const database = new AppDatabase(path.join(directory, 'media.db'));
-    const registry = new PlaybackSessionRegistry({ cleanupIntervalMs: 0 });
+    let now = 100_000;
+    const registry = new PlaybackSessionRegistry({
+      cleanupIntervalMs: 0,
+      now: () => now
+    });
     resources.push({ database, registry, directory });
     const capabilities = new DeviceCapabilityStore(database);
     const startPlaybackForMedia = vi.fn(async () => ({
@@ -56,7 +60,11 @@ describe('playback orchestration', () => {
       registry,
       capabilities,
       logger,
-      { keepAliveIntervalMs: 0 }
+      {
+        keepAliveIntervalMs: 0,
+        keepAliveIdleAfterMs: 10_000,
+        now: () => now
+      }
     );
     const deviceId = 'device_1234567890abcdef12345678';
     capabilities.touchDevice(deviceId, 'explicit');
@@ -101,9 +109,35 @@ describe('playback orchestration', () => {
       '/api/v1/playback/transcode/session-1/segment/seg_00001.ts'
     )).toBe(true);
     await service.keepAliveActiveSessions();
+    expect(keepPlaybackAlive).not.toHaveBeenCalled();
+    now += 10_000;
+    await service.keepAliveActiveSessions();
     expect(keepPlaybackAlive).toHaveBeenCalledOnce();
     expect(keepPlaybackAlive).toHaveBeenCalledWith(
       '/api/v1/playback/transcode/session-1/master.m3u8'
+    );
+
+    await registry.getOrCreate({
+      deviceId,
+      mediaFileId: 'file-2',
+      profileId: 'profile-1',
+      mode: 'auto-silo',
+      quality: 'auto',
+      audioSelection: 'policy-profile',
+      subtitleSelection: 'none',
+      dynamicRangeMode: 'sdr'
+    }, now + 60_000, async () => ({
+      siloSessionId: 'session-2',
+      siloFileId: 121,
+      upstreamPath: '/api/v1/stream/session-2',
+      delivery: 'original_http'
+    }));
+    now += 10_000;
+    keepPlaybackAlive.mockClear();
+    await service.keepAliveActiveSessions();
+    expect(keepPlaybackAlive).toHaveBeenCalledTimes(1);
+    expect(keepPlaybackAlive).not.toHaveBeenCalledWith(
+      '/api/v1/stream/session-2'
     );
     service.close();
   });

@@ -31,6 +31,21 @@ export interface PlaybackSession extends PlaybackSessionStart {
   lastAccess: number;
   expiresAt: number;
   maximumExpiresAt: number;
+  mediaRequestCount: number;
+  slowMediaResponseCount: number;
+  lastMediaResponseMs: number | null;
+  lastMediaStatus: number | null;
+}
+
+export interface PlaybackMediaObservation {
+  playbackId: string;
+  siloSessionId: string | null;
+  durationMs: number;
+  status: number;
+  requestCount: number;
+  slowResponseCount: number;
+  slow: boolean;
+  summaryDue: boolean;
 }
 
 export type PlaybackSessionSource =
@@ -101,7 +116,7 @@ export class PlaybackSessionRegistry {
     options: PlaybackSessionRegistryOptions = {}
   ) {
     this.sessionTtlMs =
-      options.sessionTtlMs ?? 15 * 60_000;
+      options.sessionTtlMs ?? 5 * 60_000;
     this.now = options.now ?? Date.now;
 
     const cleanupIntervalMs =
@@ -182,7 +197,11 @@ export class PlaybackSessionRegistry {
           maximumExpiresAt,
           createdAt + this.sessionTtlMs
         ),
-        maximumExpiresAt
+        maximumExpiresAt,
+        mediaRequestCount: 0,
+        slowMediaResponseCount: 0,
+        lastMediaResponseMs: null,
+        lastMediaStatus: null
       };
 
       this.activeSessions.set(
@@ -245,6 +264,43 @@ export class PlaybackSessionRegistry {
     return false;
   }
 
+  recordUpstreamResponse(
+    pathname: string,
+    durationMs: number,
+    status: number
+  ): PlaybackMediaObservation | null {
+    const requestedRoot = playbackTransportRoot(pathname);
+    if (!requestedRoot) return null;
+    const segment = new URL(pathname, 'http://silo.invalid')
+      .pathname.includes('/segment/');
+    const slow = status === 0 || status >= 500 || (segment && durationMs >= 2_000);
+
+    for (const session of this.activeSessions.values()) {
+      if (session.expiresAt <= this.now()) continue;
+      if (playbackTransportRoot(session.upstreamPath) !== requestedRoot) continue;
+      session.mediaRequestCount += 1;
+      session.lastMediaResponseMs = durationMs;
+      session.lastMediaStatus = status;
+      if (slow) session.slowMediaResponseCount += 1;
+
+      return {
+        playbackId: session.playbackId,
+        siloSessionId: session.siloSessionId,
+        durationMs,
+        status,
+        requestCount: session.mediaRequestCount,
+        slowResponseCount: session.slowMediaResponseCount,
+        slow,
+        summaryDue: slow && (
+          session.slowMediaResponseCount === 3 ||
+          session.slowMediaResponseCount % 10 === 0
+        )
+      };
+    }
+
+    return null;
+  }
+
   activeSnapshot(): PlaybackSession[] {
     this.cleanupExpired();
     return [...this.activeSessions.values()].map(session => ({ ...session }));
@@ -268,6 +324,8 @@ export class PlaybackSessionRegistry {
 }
 
 export function playbackTransportRoot(pathname: string): string | null {
-  const match = pathname.match(/^(.*\/playback\/(?:transcode\/)?[^/?#]+)/);
+  const match = pathname.match(
+    /^(\/api\/v1\/(?:playback\/transcode|stream)\/[^/?#]+)/
+  );
   return match?.[1] || null;
 }

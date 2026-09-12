@@ -124,9 +124,8 @@ describe('media details modal', () => {
     expect(qualityOptions.indexOf('value="auto"'))
       .toBeLessThan(qualityOptions.indexOf('value="2160p-high"'));
     expect(qualityOptions.match(/recommended/g)).toHaveLength(1);
-    expect(html).toContain(
-      'lets Silo choose HLS remux, audio-only conversion, or video transcode'
-    );
+    expect(html).toContain('lets Silo choose original playback');
+    expect(html).toContain('Separate Direct Play option');
   });
 
   it('regenerates the secure manifest URL with an explicit warning', async () => {

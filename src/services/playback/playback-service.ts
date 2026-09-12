@@ -4,7 +4,6 @@ import type { SiloEpisodeReference } from '../silo.js';
 import type { DeviceCapabilityStore } from './device-capabilities.js';
 import {
   planSiloPlayback,
-  selectAutoTranscodeFallback,
   type PlaybackPolicyPlan
 } from './playback-policy.js';
 import {
@@ -19,6 +18,8 @@ interface PlaybackLogger {
 
 interface PlaybackServiceOptions {
   keepAliveIntervalMs?: number;
+  keepAliveIdleAfterMs?: number;
+  now?: () => number;
 }
 
 export interface PlaybackOrchestrationInput {
@@ -56,6 +57,8 @@ export class PlaybackOrchestrationError extends Error {
  */
 export class PlaybackService {
   private readonly keepAliveTimer: NodeJS.Timeout | null;
+  private readonly keepAliveIdleAfterMs: number;
+  private readonly now: () => number;
   private keepAliveRunning = false;
 
   constructor(
@@ -65,6 +68,8 @@ export class PlaybackService {
     private readonly logger: PlaybackLogger,
     options: PlaybackServiceOptions = {}
   ) {
+    this.keepAliveIdleAfterMs = options.keepAliveIdleAfterMs ?? 10_000;
+    this.now = options.now ?? Date.now;
     const intervalMs = options.keepAliveIntervalMs ?? 15_000;
     if (intervalMs > 0) {
       this.keepAliveTimer = setInterval(
@@ -81,12 +86,39 @@ export class PlaybackService {
     return this.sessions.touchUpstreamPath(pathname);
   }
 
+  recordMediaResponse(
+    pathname: string,
+    durationMs: number,
+    status: number
+  ): void {
+    const observation = this.sessions.recordUpstreamResponse(
+      pathname,
+      durationMs,
+      status
+    );
+
+    if (!observation?.summaryDue) return;
+    this.logger.warn({
+      playback_id: observation.playbackId,
+      silo_session_id: observation.siloSessionId,
+      upstream_status: observation.status,
+      upstream_response_ms: observation.durationMs,
+      media_request_count: observation.requestCount,
+      slow_media_response_count: observation.slowResponseCount
+    }, 'Playback media delivery is repeatedly slow or unavailable');
+  }
+
   async keepAliveActiveSessions(): Promise<void> {
     if (this.keepAliveRunning) return;
     this.keepAliveRunning = true;
 
     try {
-      await Promise.all(this.sessions.activeSnapshot().map(async session => {
+      const sessions = this.sessions.activeSnapshot().filter(session =>
+        ['server_remux_hls', 'server_transcode_hls'].includes(session.delivery) &&
+        this.now() - session.lastAccess >= this.keepAliveIdleAfterMs
+      );
+
+      await Promise.all(sessions.map(async session => {
         try {
           const alive = await this.silo.keepPlaybackAlive(session.upstreamPath);
           if (!alive) {
@@ -160,58 +192,29 @@ export class PlaybackService {
           );
         }
 
-        const { fileId, playbackAttemptId } = started;
-        let { decision } = started;
-        const initialPlan = decision.playback_plan;
-        const fallbackQuality = initialPlan
-          ? selectAutoTranscodeFallback(input.configuredQuality, initialPlan)
-          : null;
-
-        if (
-          fallbackQuality &&
-          decision.session_id &&
-          initialPlan?.plan_id &&
-          initialPlan.plan_attempt_key
-        ) {
-          const replanned = await this.silo.replanPlaybackQuality(
-            decision.session_id,
-            input.profileId,
-            playbackAttemptId,
-            initialPlan,
-            fallbackQuality,
-            policy.requestProfile,
-            initialPlan.timeline?.source_start_seconds || 0
-          );
-
-          if (replanned.outcome !== 'playable' || !replanned.playback_plan) {
-            throw new PlaybackOrchestrationError(
-              502,
-              'Silo could not create the safer Auto playback route.'
-            );
-          }
-
-          this.logger.info({
-            playback_id: playbackId,
-            silo_session_id: decision.session_id,
-            from_quality: 'auto',
-            to_quality: fallbackQuality,
-            reason: 'full_4k_video_transcode_guard'
-          }, 'Playback quality replanned');
-          decision = replanned;
-        }
-
+        const { fileId, decision } = started;
         const plan = decision.playback_plan;
+        const hlsPlan =
+          ['server_remux_hls', 'server_transcode_hls'].includes(
+            plan?.delivery || ''
+          ) &&
+          plan?.stream.protocol === 'hls' &&
+          plan.stream.url.startsWith('/playback/');
+        const progressivePlan =
+          ['original_http', 'server_remux_progressive'].includes(
+            plan?.delivery || ''
+          ) &&
+          plan?.stream.protocol === 'http_progressive' &&
+          plan.stream.url.startsWith('/stream/');
 
         if (
           decision.outcome !== 'playable' ||
           !plan ||
-          !['server_remux_hls', 'server_transcode_hls'].includes(plan.delivery) ||
-          plan.stream.protocol !== 'hls' ||
-          !plan.stream.url.startsWith('/playback/')
+          (!hlsPlan && !progressivePlan)
         ) {
           throw new PlaybackOrchestrationError(
             502,
-            'Silo did not return a usable transcoded HLS stream.'
+            'Silo did not return a usable playback stream.'
           );
         }
 
@@ -232,8 +235,8 @@ export class PlaybackService {
           },
           decision: plan.delivery,
           target: {
-            quality: fallbackQuality || policy.requestProfile.qualityPreference,
-            max_resolution: fallbackQuality ? '1080p' : policy.target.maxResolution,
+            quality: policy.requestProfile.qualityPreference,
+            max_resolution: policy.target.maxResolution,
             width: plan.effective_recipe?.width || null,
             height: plan.effective_recipe?.height || null,
             video_codec: plan.effective_recipe?.video_codec || policy.target.videoCodec,
@@ -245,7 +248,7 @@ export class PlaybackService {
             ?.map(transformation => transformation.name)
             .filter(Boolean) || [],
           startup_ms: Date.now() - startupStartedAt,
-          fallback_attempt: fallbackQuality ? 1 : 0
+          fallback_attempt: 0
         }, 'Playback session created');
 
         return {

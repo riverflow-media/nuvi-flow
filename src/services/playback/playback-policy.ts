@@ -42,33 +42,37 @@ export interface SiloPlaybackRequestProfile {
       output_context_id: string;
     };
     deliveries: {
-      hls: {
-        enabled: boolean;
-        supported_on_device: boolean;
-        containers: string[];
-        video_codecs: string[];
-        audio_decode_codecs: string[];
-        audio_passthrough_codecs: string[];
-        max_channels: number;
-        subtitles: {
-          embedded_text: boolean;
-          sidecar_text: boolean;
-          ass_styling: boolean;
-          embedded_bitmap: boolean;
-          sidecar_bitmap: boolean;
-          font_attachments: boolean;
-        };
-        features: string[];
-        auth_header_refresh: boolean;
-        validated_claims: string[];
-        transformations: unknown[];
-      };
+      original_http?: SiloDeliveryCapability;
+      progressive?: SiloDeliveryCapability;
+      hls?: SiloDeliveryCapability;
     };
   };
 }
 
+export interface SiloDeliveryCapability {
+  enabled: boolean;
+  supported_on_device: boolean;
+  containers: string[];
+  video_codecs: string[];
+  audio_decode_codecs: string[];
+  audio_passthrough_codecs: string[];
+  max_channels: number;
+  subtitles: {
+    embedded_text: boolean;
+    sidecar_text: boolean;
+    ass_styling: boolean;
+    embedded_bitmap: boolean;
+    sidecar_bitmap: boolean;
+    font_attachments: boolean;
+  };
+  features: string[];
+  auth_header_refresh: boolean;
+  validated_claims: string[];
+  transformations: unknown[];
+}
+
 export interface PlaybackPolicyPlan {
-  mode: 'auto-silo-hls' | 'fixed-silo-hls';
+  mode: 'auto-silo' | 'fixed-silo-hls';
   reason: 'conservative_unknown_device' | 'explicit_device_overrides';
   requestProfile: SiloPlaybackRequestProfile;
   target: {
@@ -78,56 +82,6 @@ export interface PlaybackPolicyPlan {
     maxAudioChannels: 2;
     dynamicRange: 'sdr' | 'hdr';
   };
-}
-
-interface SiloPlanForCostGuard {
-  delivery?: string;
-  effective_recipe?: {
-    height?: number;
-  };
-  available_qualities?: Array<{
-    label?: string;
-  }>;
-}
-
-const autoTranscodeFallbackLadder = [
-  '1080p-medium',
-  '1080p-high',
-  '1080p-low',
-  '720p-high',
-  '720p-medium',
-  '720p-low',
-  '480p'
-] as const satisfies readonly SiloQualityPreference[];
-
-/**
- * Avoid handing an unknown device a full 4K encode in Auto mode.
- *
- * Direct/remux plans retain 4K. This guard applies only after Silo has shown
- * that video must be encoded, and it chooses a rung Silo explicitly advertised
- * for the current source instead of maintaining a separate bitrate table.
- */
-export function selectAutoTranscodeFallback(
-  configuredQuality: string,
-  plan: SiloPlanForCostGuard
-): SiloQualityPreference | null {
-  if (
-    normalizeSiloQualityPreference(configuredQuality) !== 'auto' ||
-    plan.delivery !== 'server_transcode_hls' ||
-    (plan.effective_recipe?.height || 0) <= 1080
-  ) {
-    return null;
-  }
-
-  const available = new Set(
-    plan.available_qualities
-      ?.map(quality => quality.label)
-      .filter((label): label is string => Boolean(label)) || []
-  );
-
-  return autoTranscodeFallbackLadder.find(
-    quality => available.has(quality)
-  ) || null;
 }
 
 function sourceResolutionCeiling(
@@ -153,10 +107,10 @@ export function normalizeSiloQualityPreference(
 /**
  * Initial policy for devices without measured capabilities.
  *
- * It offers only HLS because Nuvi-Flow can safely proxy that delivery today.
- * H.264/AAC stereo are conservative decode declarations, not inferred device
- * facts. Silo can therefore copy compatible video, adapt audio independently,
- * or transcode incompatible video while retaining the source resolution class.
+ * Auto offers Silo's original, progressive-remux, and HLS delivery classes.
+ * Unknown devices still declare only conservative MP4/H.264/AAC/SDR support;
+ * explicit user overrides can widen those claims. A fixed quality intentionally
+ * offers only HLS so the administrator's requested encode rung remains binding.
  */
 export function planSiloPlayback(
   file: Pick<MediaFileRow, 'width' | 'height'>,
@@ -171,10 +125,12 @@ export function planSiloPlayback(
   ) || [];
   const supportedVideoCodecs = new Set(['h264']);
   const supportedAudioCodecs = new Set(['aac']);
+  const supportedContainers = new Set(['mp4']);
   const allowedVideoCodecs = new Set(['h264', 'hevc', 'av1', 'vp9']);
   const allowedAudioCodecs = new Set([
     'aac', 'ac3', 'eac3', 'opus', 'dts', 'dts-hd', 'truehd'
   ]);
+  const allowedContainers = new Set(['mkv', 'mp4', 'webm', 'mpegts']);
 
   for (const override of userOverrides) {
     if (
@@ -189,6 +145,12 @@ export function planSiloPlayback(
     ) {
       supportedAudioCodecs.add(override.capability);
     }
+    if (
+      override.category === 'container' &&
+      allowedContainers.has(override.capability)
+    ) {
+      supportedContainers.add(override.capability);
+    }
   }
 
   const hdr = userOverrides.some(
@@ -197,11 +159,15 @@ export function planSiloPlayback(
   );
   const videoCodecs = [...supportedVideoCodecs];
   const audioCodecs = [...supportedAudioCodecs];
-  const usedOverrides = videoCodecs.length > 1 || audioCodecs.length > 1 || hdr;
-  const hls = {
+  const containers = [...supportedContainers];
+  const usedOverrides = videoCodecs.length > 1 ||
+    audioCodecs.length > 1 || containers.length > 1 || hdr;
+  const deliveryCapability = (
+    deliveryContainers: string[]
+  ): SiloDeliveryCapability => ({
     enabled: true,
     supported_on_device: true,
-    containers: ['hls'],
+    containers: deliveryContainers,
     video_codecs: videoCodecs,
     audio_decode_codecs: audioCodecs,
     audio_passthrough_codecs: [],
@@ -218,11 +184,18 @@ export function planSiloPlayback(
     auth_header_refresh: true,
     validated_claims: [],
     transformations: []
+  });
+  const hls = deliveryCapability(['hls']);
+  const autoDeliveries = {
+    original_http: deliveryCapability(containers),
+    progressive: deliveryCapability(['mp4']),
+    hls
   };
+  const auto = qualityPreference === 'auto';
 
   return {
-    mode: qualityPreference === 'auto'
-      ? 'auto-silo-hls'
+    mode: auto
+      ? 'auto-silo'
       : 'fixed-silo-hls',
     reason: usedOverrides
       ? 'explicit_device_overrides'
@@ -235,7 +208,7 @@ export function planSiloPlayback(
         codecs_video: videoCodecs,
         codecs_video_hardware: videoCodecs,
         codecs_audio: audioCodecs,
-        containers: ['hls'],
+        containers: auto ? [...containers, 'hls'] : ['hls'],
         max_resolution: maxResolution,
         hdr
       },
@@ -245,7 +218,7 @@ export function planSiloPlayback(
           platform: 'server_proxy',
           os_version: '',
           manufacturer: 'Nuvi-Flow',
-          model: 'HLS Proxy',
+          model: 'Playback Proxy',
           platform_details: {
             policy: usedOverrides
               ? 'explicit_overrides_v1'
@@ -255,7 +228,7 @@ export function planSiloPlayback(
         output: {
           output_context_id: deviceId
         },
-        deliveries: { hls }
+        deliveries: auto ? autoDeliveries : { hls }
       }
     },
     target: {

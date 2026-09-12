@@ -3,10 +3,13 @@ import { promisify } from 'node:util';
 
 const scrypt = promisify(scryptCallback);
 const deviceIdPattern = /^device_[a-f0-9]{24}$/;
-const siloPlaybackPrefix = '/api/v1/playback/';
+const siloMediaPrefixes = [
+  '/api/v1/playback/',
+  '/api/v1/stream/'
+] as const;
 
 function isSafeSiloMediaPath(value: string): boolean {
-  if (!value.startsWith(siloPlaybackPrefix)) return false;
+  if (!siloMediaPrefixes.some(prefix => value.startsWith(prefix))) return false;
 
   try {
     const parsed = new URL(value, 'http://silo.invalid');
@@ -15,7 +18,7 @@ function isSafeSiloMediaPath(value: string): boolean {
     return parsed.origin === 'http://silo.invalid' &&
       !parsed.hash &&
       normalized === value &&
-      parsed.pathname.startsWith(siloPlaybackPrefix) &&
+      siloMediaPrefixes.some(prefix => parsed.pathname.startsWith(prefix)) &&
       !/%(?:2e|2f|5c)/i.test(parsed.pathname);
   } catch {
     return false;

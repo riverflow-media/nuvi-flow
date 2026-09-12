@@ -309,13 +309,24 @@ async function serveSiloMedia(
   }
 
   let response: Response;
+  const upstreamStartedAt = Date.now();
 
   try {
     response = await silo.fetchMedia(payload.path, {
       method: request.method,
       headers: upstreamHeaders
     });
+    playback.recordMediaResponse(
+      payload.path,
+      Date.now() - upstreamStartedAt,
+      response.status
+    );
   } catch {
+    playback.recordMediaResponse(
+      payload.path,
+      Date.now() - upstreamStartedAt,
+      0
+    );
     return reply
       .code(502)
       .header('Cache-Control', 'no-store')
@@ -330,6 +341,7 @@ async function serveSiloMedia(
   for (const name of [
     'accept-ranges',
     'content-range',
+    'content-disposition',
     'etag',
     'last-modified'
   ]) {

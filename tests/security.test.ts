@@ -109,12 +109,30 @@ describe('HMAC stream tokens', () => {
     );
   });
 
+  it('allows only Silo playback and authenticated stream media routes', () => {
+    const directPath = '/api/v1/stream/session-123?seek=42';
+    const { token } = createSiloMediaToken(directPath, 10_000, secret);
+    expect(verifySiloMediaToken(token, secret, 9_000)?.path)
+      .toBe(directPath);
+
+    for (const path of [
+      '/api/v1/health',
+      '/api/v1/catalog/items/1',
+      '/api/v1/streams/session-123'
+    ]) {
+      expect(() => createSiloMediaToken(path, 10_000, secret))
+        .toThrow('Invalid Silo playback media path');
+    }
+  });
+
   it('rejects normalized or encoded traversal in Silo media paths', () => {
     for (const path of [
       '/api/v1/playback/session/../../health',
       '/api/v1/playback/%2e%2e/health',
       '/api/v1/playback/session%2f..%2fhealth',
-      '/api/v1/playback/session\\..\\health'
+      '/api/v1/playback/session\\..\\health',
+      '/api/v1/stream/session/../../health',
+      '/api/v1/stream/%2e%2e/health'
     ]) {
       expect(() => createSiloMediaToken(path, 10_000, secret))
         .toThrow('Invalid Silo playback media path');

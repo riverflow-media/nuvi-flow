@@ -28,29 +28,37 @@ before its image is published.
 - Capability snapshot revisions included in playback keys so changed evidence
   cannot reuse a session created under an older policy input
 
-## Completed pause/resume liveness foundation
+## Completed demand-aware pause/resume liveness foundation
 
 - Treat actual proxied manifest and segment requests as local session activity
-- While that bounded local lease remains active, send authenticated manifest GET
-  requests every 15 seconds so Silo's playback handler records activity and does
-  not classify a short Nuvio pause as an abandoned unpaused session
+- Suppress upstream keepalives while real segment requests are active; once HLS
+  traffic goes idle, send authenticated manifest checks at a bounded interval so
+  Silo does not classify a short Nuvio pause as abandonment
+- Limit the local idle lease to five minutes. Nuvi-Flow cannot distinguish pause
+  from abandonment perfectly because the Stremio addon protocol supplies no
+  pause, resume, or player-closed event
+- Do not poll original/progressive streams; their live HTTP transport supplies
+  its own liveness signal
 - Keep the lease capped by the signed playback authorization and stop liveness
   checks after local expiry, preventing indefinite abandoned GPU work
 - Preserve Silo's existing reconstruction and segment recovery behavior; no
   speculative retry loop or hidden replacement transcode is introduced
 
-## Completed conservative Auto playback policy
+## Completed route-neutral Auto playback policy
 
 - Protocol-v3 requests now use a route-neutral policy instead of a fixed,
   synthetic Android/1080p profile
 - Auto keeps the source resolution class, including 4K, without treating a
   missing bandwidth estimate as zero or unlimited
-- Unknown devices conservatively declare H.264, AAC stereo, and SDR support;
-  Silo may HLS-remux compatible video, adapt audio independently, or transcode
-  incompatible video
-- Fixed quality rungs remain explicit administrator overrides
-- The policy offers only HLS until the proxy can stream unbounded progressive
-  responses safely
+- Auto negotiates original HTTP, progressive remux, HLS remux, and HLS
+  transcode, allowing Silo to choose the least expensive compatible route
+- Unknown devices conservatively declare MP4, H.264, AAC stereo, and SDR for
+  original/progressive delivery; HLS remains the compatibility route
+- Fixed quality rungs remain explicit HLS-only administrator overrides
+- Progressive streams retain byte-range metadata and are not terminated by the
+  media client's connection-start timeout
+- The separate Direct Play stream can be hidden without disabling original
+  playback inside Auto; it remains available whenever Silo is unavailable
 
 Known HDR support is not inferred. HDR preservation will be enabled only after
 capability evidence exists; until then Silo may tone-map incompatible HDR to
@@ -70,21 +78,20 @@ the declared SDR target.
 - Keep credentials server-side and every child resource behind an expiring
   signed Nuvi-Flow URL
 
-## Completed initial Auto cost guard
+## Retired machine-specific Auto cost guard
 
-- Retain 4K when Silo selects direct or remux delivery
-- If Auto instead selects a full 4K video encode, use Silo's protocol-v3
-  `quality_change` replan before returning the playback URL
-- Prefer the advertised `1080p-medium` rung for full 4K encodes after field
-  evidence showed `1080p-high` could not maintain a safe segment buffer; use
-  another 1080p-or-lower rung only when medium is unavailable
-- Replan at most once, preserve fixed administrator quality choices, and keep
-  the existing single-flight session boundary around start plus replan
+- The early 1080p-medium guard reflected one mini PC's sustainable throughput
+  and incorrectly limited more capable self-hosters
+- Auto now preserves the source ceiling and lets Silo choose the highest
+  compatible initial plan. Administrators can still select a fixed rung for a
+  known constrained server
 
 ## Current focus and next milestones
 
-1. Runtime fallback using supported startup and segment-production evidence;
-   Silo does not currently expose encoder FPS/speed through protocol v3
+1. Runtime fallback using measured manifest/segment response time, repeated slow
+   segment counts, status failures, and startup latency. Silo does not currently
+   expose encoder FPS/GPU utilization through protocol v3, so fallback must use
+   observable proxy evidence and perform at most one quality replan
 2. Capability learning rules with confidence thresholds and decay, followed by
    task-focused admin controls for explicit device overrides
 3. Concurrency and transcoder-capacity controls

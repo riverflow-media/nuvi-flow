@@ -127,7 +127,7 @@ describe('Stremio and media HTTP endpoints', () => {
     expect(other?.deviceId).not.toBe(first?.deviceId);
   });
 
-  it('adds a second Silo Auto stream without changing direct playback', async () => {
+  it('adds a route-neutral Auto stream without changing direct playback by default', async () => {
     built.settings.set(
       'siloProfileId',
       'profile-1'
@@ -157,10 +157,34 @@ describe('Stremio and media HTTP endpoints', () => {
     );
 
     expect(streams[1]).toMatchObject({
-      name: 'Silo Auto',
-      title: 'Silo Auto • up to 1080p • H.264/AAC compatibility',
-      description: 'Silo automatically chooses HLS remux, audio conversion, or video transcode'
+      name: 'Nuvi-Flow Auto',
+      title: 'Auto • up to 1080p • direct/remux/transcode',
+      description: 'Chooses the highest compatible Silo route, including original playback'
     });
+  });
+
+  it('can hide the separate Direct entry without hiding the Silo fallback', async () => {
+    built.settings.set('siloProfileId', 'profile-1');
+    built.settings.set('showDirectPlay', 'false');
+
+    const response = await built.app.inject({
+      method: 'GET',
+      url: addonUrl('/stream/movie/tt1234567.json')
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json().streams).toHaveLength(1);
+    expect(response.json().streams[0]).toMatchObject({
+      name: 'Nuvi-Flow Auto'
+    });
+
+    built.settings.set('siloEnabled', 'false');
+    const withoutSilo = await built.app.inject({
+      method: 'GET',
+      url: addonUrl('/stream/movie/tt1234567.json')
+    });
+    expect(withoutSilo.json().streams).toHaveLength(1);
+    expect(withoutSilo.json().streams[0].url).toMatch(/\/media\//);
   });
 
   it('serves exact partial content and invalid ranges', async () => {
@@ -374,7 +398,9 @@ describe('Stremio and media HTTP endpoints', () => {
           codecs_audio: ['aac'],
           hdr: false
         });
-        expect(Object.keys(body.client_playback_context.deliveries)).toEqual(['hls']);
+        expect(Object.keys(body.client_playback_context.deliveries)).toEqual([
+          'original_http', 'progressive', 'hls'
+        ]);
         return new Response(JSON.stringify({
           protocol_version: 3,
           server_features: ['playback_plan_v3'],
@@ -418,7 +444,75 @@ describe('Stremio and media HTTP endpoints', () => {
     expect(response.headers.location).toMatch(/^\/silo-media\//);
   });
 
-  it('replans a full 4K Auto encode once to the sustainable advertised 1080p rung', async () => {
+  it('securely proxies an Auto original stream with byte ranges', async () => {
+    built.settings.set('siloProfileId', 'profile-1');
+    built.settings.set('siloTranscodeQuality', 'auto');
+
+    const fetchMock = vi.fn().mockImplementation(async (
+      url: string,
+      init?: RequestInit
+    ) => {
+      if (url.endsWith('/versions')) {
+        return new Response(JSON.stringify([{
+          file_id: 120,
+          file_path: mediaPath
+        }]), { status: 200, headers: { 'Content-Type': 'application/json' } });
+      }
+      if (url.endsWith('/playback/start')) {
+        return new Response(JSON.stringify({
+          protocol_version: 3,
+          server_features: ['playback_plan_v3'],
+          outcome: 'playable',
+          session_id: 'direct-session',
+          playback_plan: {
+            delivery: 'original_http',
+            stream: {
+              url: '/stream/direct-session',
+              protocol: 'http_progressive',
+              headers: {},
+              header_refresh: 'none'
+            }
+          }
+        }), { status: 201, headers: { 'Content-Type': 'application/json' } });
+      }
+      if (url.endsWith('/api/v1/stream/direct-session')) {
+        const headers = new Headers(init?.headers);
+        expect(headers.get('range')).toBe('bytes=10-19');
+        expect(headers.get('authorization')).toBe('Bearer test-silo-key');
+        return new Response('abcdefghij', {
+          status: 206,
+          headers: {
+            'Content-Type': 'video/mp4',
+            'Content-Length': '10',
+            'Content-Range': 'bytes 10-19/100',
+            'Accept-Ranges': 'bytes'
+          }
+        });
+      }
+      return new Response(null, { status: 404 });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const planned = await built.app.inject({
+      method: 'GET',
+      url: `/silo-stream/${encodeURIComponent(token())}`
+    });
+    expect(planned.statusCode).toBe(302);
+    expect(planned.headers.location).not.toContain('test-silo-key');
+
+    const streamed = await built.app.inject({
+      method: 'GET',
+      url: planned.headers.location!,
+      headers: { range: 'bytes=10-19' }
+    });
+    expect(streamed.statusCode).toBe(206);
+    expect(streamed.body).toBe('abcdefghij');
+    expect(streamed.headers['content-length']).toBe('10');
+    expect(streamed.headers['content-range']).toBe('bytes 10-19/100');
+    expect(streamed.headers['accept-ranges']).toBe('bytes');
+  });
+
+  it('does not impose the local test server 1080p ceiling on other Auto users', async () => {
     built.settings.set('siloProfileId', 'profile-1');
     built.settings.set('siloTranscodeQuality', 'auto');
     built.database.sqlite.prepare(
@@ -521,11 +615,11 @@ describe('Stremio and media HTTP endpoints', () => {
       decodeURIComponent(encodedToken),
       secret
     )?.path).toBe(
-      '/api/v1/playback/transcode/adaptive-session/1080p-medium.m3u8'
+      '/api/v1/playback/transcode/adaptive-session/original.m3u8'
     );
     expect(fetchMock.mock.calls.filter(([url]) =>
       String(url).endsWith('/replan')
-    )).toHaveLength(1);
+    )).toHaveLength(0);
     expect(fetchMock.mock.calls.filter(([url]) =>
       String(url).endsWith('/playback/start')
     )).toHaveLength(1);

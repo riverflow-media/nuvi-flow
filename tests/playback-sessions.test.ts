@@ -285,4 +285,50 @@ describe('PlaybackSessionRegistry', () => {
     expect(registry.cleanupExpired()).toBe(1);
     registry.close();
   });
+
+  it('tracks direct and progressive Silo stream paths by session', async () => {
+    const registry = new PlaybackSessionRegistry({ cleanupIntervalMs: 0 });
+    await registry.getOrCreate(
+      { ...baseKey, mode: 'auto-silo', quality: 'auto' },
+      Date.now() + 60_000,
+      async () => ({
+        ...started,
+        upstreamPath: '/api/v1/stream/direct-session',
+        delivery: 'original_http'
+      })
+    );
+
+    expect(registry.touchUpstreamPath(
+      '/api/v1/stream/direct-session?seek=42'
+    )).toBe(true);
+    expect(registry.touchUpstreamPath(
+      '/api/v1/stream/another-session'
+    )).toBe(false);
+    registry.close();
+  });
+
+  it('summarizes repeated slow segment delivery without logging every request', async () => {
+    const registry = new PlaybackSessionRegistry({ cleanupIntervalMs: 0 });
+    await registry.getOrCreate(
+      baseKey,
+      Date.now() + 60_000,
+      async () => started
+    );
+    const segment =
+      '/api/v1/playback/transcode/silo-session-a/segment/seg_00001.ts';
+
+    expect(registry.recordUpstreamResponse(segment, 2_100, 200))
+      .toMatchObject({ slow: true, slowResponseCount: 1, summaryDue: false });
+    expect(registry.recordUpstreamResponse(segment, 2_200, 200))
+      .toMatchObject({ slow: true, slowResponseCount: 2, summaryDue: false });
+    expect(registry.recordUpstreamResponse(segment, 2_300, 200))
+      .toMatchObject({ slow: true, slowResponseCount: 3, summaryDue: true });
+    expect(registry.activeSnapshot()[0]).toMatchObject({
+      mediaRequestCount: 3,
+      slowMediaResponseCount: 3,
+      lastMediaResponseMs: 2_300,
+      lastMediaStatus: 200
+    });
+    registry.close();
+  });
 });

@@ -332,6 +332,10 @@ export class SiloClient {
     );
 
     let response: Response;
+    const controller = init.signal ? null : new AbortController();
+    const timeout = controller
+      ? setTimeout(() => controller.abort(), 60_000)
+      : null;
 
     try {
       response = await fetch(
@@ -340,7 +344,7 @@ export class SiloClient {
           ...init,
           signal:
             init.signal ??
-            AbortSignal.timeout(60_000),
+            controller!.signal,
           headers
         }
       );
@@ -353,6 +357,8 @@ export class SiloClient {
       throw new SiloApiError(
         `Could not fetch Silo media: ${message}`
       );
+    } finally {
+      if (timeout) clearTimeout(timeout);
     }
 
     return response;

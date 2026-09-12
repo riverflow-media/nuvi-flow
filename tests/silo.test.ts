@@ -13,6 +13,7 @@ import {
 import { planSiloPlayback } from '../src/services/playback/playback-policy.js';
 
 afterEach(() => {
+  vi.useRealTimers();
   vi.unstubAllGlobals();
   vi.unstubAllEnvs();
 });
@@ -224,7 +225,7 @@ describe('Silo integration', () => {
       client_capabilities: {
         codecs_video: ['h264'],
         codecs_audio: ['aac'],
-        containers: ['hls'],
+        containers: ['mp4', 'hls'],
         max_resolution: '2160p',
         hdr: false
       },
@@ -241,6 +242,20 @@ describe('Silo integration', () => {
           output_context_id: 'device_1234567890abcdef12345678'
         },
         deliveries: {
+          original_http: {
+            enabled: true,
+            supported_on_device: true,
+            containers: ['mp4'],
+            auth_header_refresh: true,
+            max_channels: 2
+          },
+          progressive: {
+            enabled: true,
+            supported_on_device: true,
+            containers: ['mp4'],
+            auth_header_refresh: true,
+            max_channels: 2
+          },
           hls: {
             enabled: true,
             supported_on_device: true,
@@ -269,6 +284,7 @@ describe('Silo integration', () => {
   });
 
   it('fetches Silo media with server-side authentication', async () => {
+    vi.useFakeTimers();
     const fetchMock = vi.fn().mockResolvedValue(
       new Response(
         '#EXTM3U\nsegment/seg_00000.ts\n',
@@ -319,6 +335,9 @@ describe('Silo integration', () => {
     const headers = new Headers(
       init.headers
     );
+    const signal = init.signal as AbortSignal;
+    await vi.advanceTimersByTimeAsync(60_001);
+    expect(signal.aborted).toBe(false);
 
     expect(
       headers.get('Authorization')

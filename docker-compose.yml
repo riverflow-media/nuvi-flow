@@ -32,7 +32,8 @@ services:
       SILO_URL: ${SILO_URL:-http://silo:8080}
       SILO_API_KEY: ${SILO_API_KEY:-}
       SILO_PROFILE_ID: ${SILO_PROFILE_ID:-}
-      SILO_TRANSCODE_QUALITY: ${SILO_TRANSCODE_QUALITY:-1080p-medium}
+      SILO_TRANSCODE_QUALITY: ${SILO_TRANSCODE_QUALITY:-auto}
+      SHOW_DIRECT_PLAY: ${SHOW_DIRECT_PLAY:-true}
       TRUST_PROXY: "false"
       LOG_LEVEL: info
     volumes:

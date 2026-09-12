@@ -626,14 +626,15 @@ export function registerAdminRoutes(
       settings.set('tmdbApiKey', body.tmdbApiKey);
     }
 
-    // Automatic request toggles.
+    // Boolean settings.
     for (const key of [
       'autoRequestEnabled',
       'radarrEnabled',
       'sonarrEnabled',
       'sonarrSeparateAnimeRoot',
       'sonarrMonitorWholeSeries',
-      'siloEnabled'
+      'siloEnabled',
+      'showDirectPlay'
     ]) {
       if (body[key] === 'true' || body[key] === 'false') {
         settings.set(key, body[key]!);

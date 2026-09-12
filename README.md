@@ -35,20 +35,21 @@ Symlinked media files are followed and scanned while the configured media direct
 
 ### Silo playback
 
-Nuvi-Flow can use a separate [Silo](https://github.com/Silo-Server/silo-server) server for authenticated HLS remuxing and transcoding while keeping Silo credentials and internal container addresses away from Nuvio/Stremio clients.
+Nuvi-Flow can use a separate [Silo](https://github.com/Silo-Server/silo-server) server for authenticated original playback, remuxing, and transcoding while keeping Silo credentials and internal container addresses away from Nuvio/Stremio clients.
 
 See the [playback roadmap](docs/PLAYBACK_ROADMAP.md) for the staged reliability,
 device identity, Auto playback, proxy, and fallback work.
 
 The current integration provides:
 
-- Original-file direct playback as the first stream option
-- An optional Silo Auto HLS stream that asks protocol v3 to preserve the source
-  resolution, including 4K, when viable
-- A bounded Auto cost guard: 4K direct/remux plans remain 4K, while a plan that
-  requires a full 4K video encode is replanned once to the advertised
-  `1080p-medium` rung (falling back to another 1080p-or-lower rung only when
-  medium is unavailable)
+- A route-neutral Auto stream that lets Silo protocol v3 choose byte-for-byte
+  original HTTP, progressive remux, HLS remux, audio conversion, or HLS video
+  transcode
+- Source-resolution preservation, including 4K, when the declared device
+  capabilities and Silo route allow it; Auto has no machine-specific 1080p cap
+- An optional separate Direct Play entry, shown by default and hideable under
+  **Settings → Silo**. If Silo is unavailable, Direct is always retained so the
+  addon never returns an empty playback choice
 - Conservative unknown-device declarations (H.264, AAC stereo, SDR) so Silo
   can copy compatible video, adapt audio independently, or transcode video only
   when required
@@ -77,24 +78,27 @@ The current integration provides:
   user-agent, and client-header values are not stored
 - A dedicated playback orchestration service that owns capability lookup, policy
   planning, session reuse, Silo start/replan validation, and playback summaries
-- Bounded pause/resume liveness for clients without pause events: recent proxy
-  traffic extends the local lease and authenticated Silo manifest GETs refresh
-  the upstream session every 15 seconds during a short pause; abandoned sessions
-  still expire
+- Demand-aware pause/resume liveness for clients without pause events: ordinary
+  segment traffic suppresses redundant heartbeats; after traffic becomes idle,
+  authenticated HLS manifest checks preserve a bounded five-minute pause window.
+  Original/progressive streams rely on their live transport instead of polling
+- Rolling per-session media-response observations. Repeated HLS segment waits of
+  two seconds or more produce one structured summary at controlled intervals,
+  providing the evidence needed for bounded quality fallback without log floods
 - A unique Nuvi-Flow playback ID in structured session logs and the `X-Nuvi-Flow-Playback-Id` response header
 
-Auto currently targets the safe HLS proxy path and does not send a bandwidth
-estimate when none is known. Original-file direct playback remains the first
-stream option. Explicit supported overrides can be represented by the capability
-foundation, but automatic learning and its admin controls are not enabled yet.
-Known-compatible HDR preservation, runtime throughput detection and further
-bounded fallback, and progressive/original Silo delivery remain later milestones.
+Auto does not send a bandwidth estimate when none is known. Unknown devices
+conservatively expose original/progressive playback only for MP4/H.264/AAC/SDR;
+HLS remains the compatibility route. Explicit supported overrides can widen the
+device declaration, but automatic learning and its admin controls are not enabled
+yet. Known-compatible HDR preservation and automatic runtime fallback remain
+later milestones.
 
 Streaming removes Nuvi-Flow's previous segment-sized startup delay and memory
-buffer. The cost guard prevents the heaviest unknown-device route before it is
-returned, but Nuvi-Flow does not yet measure encoder speed or sustained segment
-production. Runtime detection and additional fallback remain the next playback
-milestone.
+buffer. Nuvi-Flow now measures upstream response latency and repeated slow
+segment delivery, but it does not yet receive encoder FPS or GPU utilization
+from Silo protocol v3. Turning those observations into one bounded replan is the
+next playback milestone.
 
 New installations default to Auto. An existing saved fixed quality remains an
 intentional override after upgrading; select **Auto** under **Settings → Silo**
@@ -225,8 +229,9 @@ The password-protected dashboard provides:
 - Sonarr connection testing
 - Silo connection and profile testing
 - Silo transcode-quality selection
-- Cost-aware Auto playback: 4K direct/remux is retained, while a full 4K video
-  encode is replanned once to Silo's highest advertised 1080p rung
+- Route-neutral Auto playback across original, progressive-remux, HLS-remux,
+  audio-conversion, and video-transcode delivery
+- Optional separate Direct Play stream visibility
 - Root-folder selection
 - Quality-profile selection
 - Requested-episode or whole-series Sonarr monitoring
@@ -442,6 +447,7 @@ Common environment variables include:
 | `SILO_API_KEY` | Silo API key; never returned to the browser |
 | `SILO_PROFILE_ID` | Silo playback profile ID |
 | `SILO_TRANSCODE_QUALITY` | Silo quality policy; `auto` (default) preserves source resolution when viable, while a named rung is a fixed override |
+| `SHOW_DIRECT_PLAY` | Show a separate original-file Direct entry when Silo is available; default `true` |
 
 Radarr, Sonarr, Silo, Anime root/profile selections, addon branding, and other runtime settings can be managed from the admin dashboard.
 
