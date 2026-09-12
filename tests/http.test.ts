@@ -579,11 +579,14 @@ describe('Stremio and media HTTP endpoints', () => {
   });
 
   it('rewrites Silo HLS segment URLs through the signed proxy', async () => {
+    const arrayBufferSpy = vi.fn(async () => {
+      throw new Error('segments must not be buffered');
+    });
     const fetchMock = vi.fn().mockImplementation(
-      async (url: string) => {
+      async (url: string, init?: RequestInit) => {
         if (url.endsWith('/master.m3u8')) {
           return new Response(
-            '#EXTM3U\n#EXTINF:2.000000,\nsegment/seg_00000.ts\n',
+            '#EXTM3U\n#EXT-X-MAP:URI="segment/init.mp4?generation=2"\n#EXTINF:2.000000,\nsegment/seg_00000.ts?generation=2\n',
             {
               status: 200,
               headers: {
@@ -594,16 +597,19 @@ describe('Stremio and media HTTP endpoints', () => {
           );
         }
 
-        if (url.endsWith('/segment/seg_00000.ts')) {
-          return new Response(
-            Buffer.from('test-segment'),
-            {
-              status: 200,
-              headers: {
-                'Content-Type': 'video/mp2t'
-              }
+        if (url.includes('/segment/seg_00000.ts')) {
+          expect(new Headers(init?.headers).get('range')).toBe('bytes=0-11');
+          const response = new Response(Buffer.from('test-segment'), {
+            status: 206,
+            headers: {
+              'Content-Type': 'video/mp2t',
+              'Content-Length': '12',
+              'Content-Range': 'bytes 0-11/12',
+              'Accept-Ranges': 'bytes'
             }
-          );
+          });
+          response.arrayBuffer = arrayBufferSpy;
+          return response;
         }
 
         return new Response(null, {
@@ -641,6 +647,7 @@ describe('Stremio and media HTTP endpoints', () => {
         line &&
         !line.startsWith('#')
     );
+    const mapUrl = manifestResponse.body.match(/URI="([^"]+)"/)?.[1];
 
     expect(segmentUrl).toMatch(
       /^\/silo-media\//
@@ -649,25 +656,88 @@ describe('Stremio and media HTTP endpoints', () => {
     expect(segmentUrl).not.toContain(
       'test-silo-key'
     );
+    expect(mapUrl).toMatch(/^\/silo-media\//);
+
+    const mapToken = decodeURIComponent(mapUrl!.split('/').at(-1)!);
+    expect(verifySiloMediaToken(mapToken, secret)?.path).toBe(
+      '/api/v1/playback/transcode/session-1/segment/init.mp4?generation=2'
+    );
 
     const segmentResponse =
       await built.app.inject({
         method: 'GET',
-        url: segmentUrl!
+        url: segmentUrl!,
+        headers: { range: 'bytes=0-11' }
       });
 
     expect(
       segmentResponse.statusCode
-    ).toBe(200);
+    ).toBe(206);
+    expect(segmentResponse.headers['content-range']).toBe('bytes 0-11/12');
+    expect(segmentResponse.headers['accept-ranges']).toBe('bytes');
+    expect(segmentResponse.headers['content-length']).toBe('12');
 
     expect(segmentResponse.body).toBe(
       'test-segment'
     );
+    expect(arrayBufferSpy).not.toHaveBeenCalled();
 
     expect(fetchMock).toHaveBeenCalledWith(
-      'http://silo:8080/api/v1/playback/transcode/session-1/segment/seg_00000.ts',
+      'http://silo:8080/api/v1/playback/transcode/session-1/segment/seg_00000.ts?generation=2',
       expect.any(Object)
     );
+  });
+
+  it('rejects an HLS manifest that points outside the Silo playback session', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(
+      '#EXTM3U\nhttps://internal.example/api/v1/playback/session/segment.ts\n',
+      { status: 200, headers: { 'Content-Type': 'application/vnd.apple.mpegurl' } }
+    )));
+    const { token } = createSiloMediaToken(
+      '/api/v1/playback/transcode/session-1/master.m3u8',
+      Date.now() + 60_000,
+      secret
+    );
+
+    const response = await built.app.inject({
+      method: 'GET',
+      url: `/silo-media/${encodeURIComponent(token)}`
+    });
+
+    expect(response.statusCode).toBe(502);
+    expect(response.body).not.toContain('internal.example');
+  });
+
+  it('proxies Silo media HEAD and unsatisfied range responses', async () => {
+    const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
+      expect(init?.method).toBe('HEAD');
+      expect(new Headers(init?.headers).get('range')).toBe('bytes=99-100');
+      return new Response(null, {
+        status: 416,
+        headers: {
+          'Content-Range': 'bytes */12',
+          'Accept-Ranges': 'bytes',
+          'Content-Length': '0'
+        }
+      });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const { token } = createSiloMediaToken(
+      '/api/v1/playback/transcode/session-1/segment/seg_00000.ts',
+      Date.now() + 60_000,
+      secret
+    );
+
+    const response = await built.app.inject({
+      method: 'HEAD',
+      url: `/silo-media/${encodeURIComponent(token)}`,
+      headers: { range: 'bytes=99-100' }
+    });
+
+    expect(response.statusCode).toBe(416);
+    expect(response.headers['content-range']).toBe('bytes */12');
+    expect(response.headers['accept-ranges']).toBe('bytes');
+    expect(response.body).toBe('');
   });
 
   it('returns GET-equivalent headers and no body for HEAD', async () => {

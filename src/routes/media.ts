@@ -1,5 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { Readable } from 'node:stream';
+import type { ReadableStream as NodeReadableStream } from 'node:stream/web';
 import { lookup as mimeLookup } from 'mime-types';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import type { AppConfig } from '../config.js';
@@ -16,6 +18,12 @@ import {
 } from '../services/playback/playback-sessions.js';
 import { deriveDeviceIdentity } from '../services/playback/device-identity.js';
 import { planSiloPlayback } from '../services/playback/playback-policy.js';
+import {
+  HlsManifestError,
+  isHlsManifestPath,
+  readHlsManifest,
+  rewriteHlsManifest
+} from '../services/playback/hls-proxy.js';
 import type { SiloService } from '../services/silo-service.js';
 import type { SettingsService } from '../services/settings.js';
 import type {
@@ -403,17 +411,54 @@ async function serveSiloMedia(
       });
   }
 
-  const response = await silo.fetchMedia(
-    payload.path,
-    {
-      headers: request.headers.accept
-        ? {
-            Accept:
-              request.headers.accept
-          }
-        : undefined
-    }
-  );
+  const upstreamHeaders = new Headers();
+
+  for (const name of [
+    'accept',
+    'range',
+    'if-none-match',
+    'if-modified-since'
+  ]) {
+    const value = headerValue(request, name);
+    if (value) upstreamHeaders.set(name, value);
+  }
+
+  let response: Response;
+
+  try {
+    response = await silo.fetchMedia(payload.path, {
+      method: request.method,
+      headers: upstreamHeaders
+    });
+  } catch {
+    return reply
+      .code(502)
+      .header('Cache-Control', 'no-store')
+      .send({ error: 'Silo media could not be fetched.' });
+  }
+
+  const copyHeader = (name: string): void => {
+    const value = response.headers.get(name);
+    if (value) reply.header(name, value);
+  };
+
+  for (const name of [
+    'accept-ranges',
+    'content-range',
+    'etag',
+    'last-modified'
+  ]) {
+    copyHeader(name);
+  }
+
+  if (response.status === 304 || response.status === 416) {
+    await response.body?.cancel();
+    copyHeader('content-length');
+    return reply
+      .code(response.status)
+      .header('Cache-Control', 'private, no-store')
+      .send();
+  }
 
   if (!response.ok) {
     await response.body?.cancel();
@@ -435,81 +480,73 @@ async function serveSiloMedia(
     response.headers.get('content-type') ||
     'application/octet-stream';
 
-  if (payload.path.endsWith('.m3u8')) {
+  const manifestResponse = isHlsManifestPath(payload.path);
+
+  if (manifestResponse) {
     contentType =
       'application/vnd.apple.mpegurl';
-  } else if (payload.path.endsWith('.ts')) {
+  } else if (
+    new URL(payload.path, 'http://silo.invalid')
+      .pathname.endsWith('.ts')
+  ) {
     contentType = 'video/mp2t';
   }
 
-  let body: Buffer;
+  reply
+    .code(response.status)
+    .header('Content-Type', contentType)
+    .header('Cache-Control', 'private, no-store')
+    .header('X-Content-Type-Options', 'nosniff');
 
-  if (payload.path.endsWith('.m3u8')) {
-    const manifest =
-      await response.text();
+  if (request.method === 'HEAD') {
+    await response.body?.cancel();
+    copyHeader('content-length');
+    return reply.send();
+  }
 
-    const sourceUrl = new URL(
-      payload.path,
-      'http://playlist-base.invalid'
-    );
-
-    const rewritten = manifest
-      .split('\n')
-      .map(line => {
-        const trimmed = line.trim();
-
-        if (
-          !trimmed ||
-          trimmed.startsWith('#')
-        ) {
-          return line;
-        }
-
-        const resolved = new URL(
-          trimmed,
-          sourceUrl
-        );
-
-        const siloPath =
-          resolved.pathname +
-          resolved.search;
-
-        if (
-          !siloPath.startsWith(
-            '/api/v1/playback/'
-          )
-        ) {
-          return line;
-        }
-
-        const { token } =
-          createSiloMediaToken(
+  if (manifestResponse) {
+    try {
+      const manifest = await readHlsManifest(response);
+      const rewritten = rewriteHlsManifest(
+        manifest,
+        payload.path,
+        settings.siloUrl,
+        siloPath => {
+          const { token } = createSiloMediaToken(
             siloPath,
             payload.exp,
             config.streamSecret
           );
-
-        return (
-          '/silo-media/' +
-          encodeURIComponent(token)
-        );
-      })
-      .join('\n');
-
-    body = Buffer.from(rewritten);
-  } else {
-    body = Buffer.from(
-      await response.arrayBuffer()
-    );
+          return '/silo-media/' + encodeURIComponent(token);
+        }
+      );
+      const body = Buffer.from(rewritten);
+      return reply
+        .header('Content-Length', String(body.length))
+        .send(body);
+    } catch (error) {
+      if (error instanceof HlsManifestError) {
+        return reply
+          .code(502)
+          .header('Content-Type', 'application/json; charset=utf-8')
+          .removeHeader('Content-Length')
+          .header('Cache-Control', 'no-store')
+          .send({ error: 'Silo returned an invalid HLS manifest.' });
+      }
+      throw error;
+    }
   }
 
-  return reply
-    .code(200)
-    .header('Content-Type', contentType)
-    .header('Content-Length', String(body.length))
-    .header('Cache-Control', 'private, no-store')
-    .header('X-Content-Type-Options', 'nosniff')
-    .send(body);
+  copyHeader('content-length');
+  if (!response.body) return reply.send();
+
+  const stream = Readable.fromWeb(
+    response.body as unknown as NodeReadableStream
+  );
+  request.raw.once('aborted', () => {
+    if (!stream.destroyed) stream.destroy();
+  });
+  return reply.send(stream);
 }
 
 export function registerMediaRoutes(
@@ -540,6 +577,18 @@ export function registerMediaRoutes(
   );
 
   app.get(
+    '/silo-media/:token',
+    options,
+    (request, reply) =>
+      serveSiloMedia(
+        request,
+        reply,
+        settings,
+        config,
+        silo
+      )
+  );
+  app.head(
     '/silo-media/:token',
     options,
     (request, reply) =>

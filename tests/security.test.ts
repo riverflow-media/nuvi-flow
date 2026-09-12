@@ -109,6 +109,18 @@ describe('HMAC stream tokens', () => {
     );
   });
 
+  it('rejects normalized or encoded traversal in Silo media paths', () => {
+    for (const path of [
+      '/api/v1/playback/session/../../health',
+      '/api/v1/playback/%2e%2e/health',
+      '/api/v1/playback/session%2f..%2fhealth',
+      '/api/v1/playback/session\\..\\health'
+    ]) {
+      expect(() => createSiloMediaToken(path, 10_000, secret))
+        .toThrow('Invalid Silo playback media path');
+    }
+  });
+
   it('rejects expired tokens', () => {
     const { token } = createStreamToken('file_1', 10_000, secret, 'token-1');
     expect(verifyStreamToken(token, secret, 10_000)).toBeNull();

@@ -37,13 +37,25 @@ Known HDR support is not inferred. HDR preservation will be enabled only after
 capability evidence exists; until then Silo may tone-map incompatible HDR to
 the declared SDR target.
 
+## Completed streaming HLS proxy
+
+- Stream media segments to clients immediately instead of buffering each full
+  response in Nuvi-Flow
+- Preserve upstream `200`, `206`, `304`, and `416` behavior plus content range,
+  length, validator, and last-modified headers
+- Rewrite nested playlists, query strings, absolute Silo URLs, and HLS `URI`
+  attributes for keys, initialization maps, renditions, I-frame playlists, and
+  low-latency hints
+- Bound buffered manifest text and reject off-origin or out-of-session media
+  references without exposing internal hostnames
+- Keep credentials server-side and every child resource behind an expiring
+  signed Nuvi-Flow URL
+
 ## Current focus and next milestones
 
-1. Streaming HLS proxy improvements, including URI attributes and nested
-   playlists
-2. Bounded automatic fallback using startup and throughput evidence
-3. Capability learning with confidence, counters, and decay
-4. Concurrency and transcoder-capacity controls
+1. Bounded automatic fallback using startup and throughput evidence
+2. Capability learning with confidence, counters, and decay
+3. Concurrency and transcoder-capacity controls
 
 ## Later interface work
 

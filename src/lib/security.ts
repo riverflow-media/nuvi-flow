@@ -3,6 +3,24 @@ import { promisify } from 'node:util';
 
 const scrypt = promisify(scryptCallback);
 const deviceIdPattern = /^device_[a-f0-9]{24}$/;
+const siloPlaybackPrefix = '/api/v1/playback/';
+
+function isSafeSiloMediaPath(value: string): boolean {
+  if (!value.startsWith(siloPlaybackPrefix)) return false;
+
+  try {
+    const parsed = new URL(value, 'http://silo.invalid');
+    const normalized = parsed.pathname + parsed.search;
+
+    return parsed.origin === 'http://silo.invalid' &&
+      !parsed.hash &&
+      normalized === value &&
+      parsed.pathname.startsWith(siloPlaybackPrefix) &&
+      !/%(?:2e|2f|5c)/i.test(parsed.pathname);
+  } catch {
+    return false;
+  }
+}
 
 function signature(value: string, secret: string): string {
   return createHmac('sha256', secret).update(value).digest('base64url');
@@ -124,7 +142,7 @@ export function createSiloMediaToken(
   token: string;
   payload: SiloMediaTokenPayload;
 } {
-  if (!path.startsWith('/api/v1/playback/')) {
+  if (!isSafeSiloMediaPath(path)) {
     throw new Error(
       'Invalid Silo playback media path.'
     );
@@ -181,9 +199,7 @@ export function verifySiloMediaToken(
     if (
       payload.v !== 1 ||
       typeof payload.path !== 'string' ||
-      !payload.path.startsWith(
-        '/api/v1/playback/'
-      ) ||
+      !isSafeSiloMediaPath(payload.path) ||
       typeof payload.exp !== 'number' ||
       payload.exp <= now
     ) {

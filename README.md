@@ -57,6 +57,13 @@ The current integration provides:
   permanently cached
 - Signed Nuvi-Flow URLs for Silo manifests and segments
 - Server-side Silo authentication
+- Streaming Silo media proxy: segments are forwarded as they arrive instead of
+  being fully buffered in Nuvi-Flow
+- HLS rewriting for nested playlists, relative or absolute Silo URLs, query
+  strings, and `URI` attributes used by keys, maps, audio/subtitle renditions,
+  I-frame playlists, and low-latency hints
+- Forwarded byte-range and validator headers for reliable seeking and cache
+  revalidation, without exposing an arbitrary URL proxy
 - Concurrent playback-start coalescing
 - Short-lived reuse of active Silo sessions, preventing repeated client requests from starting overlapping FFmpeg jobs
 - Signed pseudonymous device identity carried from stream discovery into playback,
@@ -68,6 +75,11 @@ estimate when none is known. Original-file direct playback remains the first
 stream option. Per-device capability learning, known-compatible HDR
 preservation, throughput-based fallback, and progressive/original Silo delivery
 remain later milestones.
+
+Streaming removes Nuvi-Flow's previous segment-sized startup delay and memory
+buffer. It cannot make an underspeed Silo transcode run faster than real time;
+automatic detection and fallback for that condition is the next playback
+milestone.
 
 New installations default to Auto. An existing saved fixed quality remains an
 intentional override after upgrading; select **Auto** under **Settings → Silo**
