@@ -79,6 +79,56 @@ export interface PlaybackPolicyPlan {
   };
 }
 
+interface SiloPlanForCostGuard {
+  delivery?: string;
+  effective_recipe?: {
+    height?: number;
+  };
+  available_qualities?: Array<{
+    label?: string;
+  }>;
+}
+
+const autoTranscodeFallbackLadder = [
+  '1080p-high',
+  '1080p-medium',
+  '1080p-low',
+  '720p-high',
+  '720p-medium',
+  '720p-low',
+  '480p'
+] as const satisfies readonly SiloQualityPreference[];
+
+/**
+ * Avoid handing an unknown device a full 4K encode in Auto mode.
+ *
+ * Direct/remux plans retain 4K. This guard applies only after Silo has shown
+ * that video must be encoded, and it chooses a rung Silo explicitly advertised
+ * for the current source instead of maintaining a separate bitrate table.
+ */
+export function selectAutoTranscodeFallback(
+  configuredQuality: string,
+  plan: SiloPlanForCostGuard
+): SiloQualityPreference | null {
+  if (
+    normalizeSiloQualityPreference(configuredQuality) !== 'auto' ||
+    plan.delivery !== 'server_transcode_hls' ||
+    (plan.effective_recipe?.height || 0) <= 1080
+  ) {
+    return null;
+  }
+
+  const available = new Set(
+    plan.available_qualities
+      ?.map(quality => quality.label)
+      .filter((label): label is string => Boolean(label)) || []
+  );
+
+  return autoTranscodeFallbackLadder.find(
+    quality => available.has(quality)
+  ) || null;
+}
+
 function sourceResolutionCeiling(
   file: Pick<MediaFileRow, 'width' | 'height'>
 ): string {

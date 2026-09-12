@@ -337,6 +337,82 @@ describe('Silo integration', () => {
     ).toBe('preserved');
   });
 
+  it('uses Silo v3 quality-change replanning without inventing plan identity', async () => {
+    vi.stubEnv('NUVI_FLOW_VERSION', '1.2.3-test');
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({
+        protocol_version: 3,
+        server_features: ['playback_plan_v3'],
+        outcome: 'playable',
+        session_id: 'session-1',
+        playback_plan: {
+          plan_id: 'plan:22222222222222222222222222222222',
+          plan_attempt_key: 'v3:2222222222222222',
+          delivery: 'server_transcode_hls',
+          stream: {
+            url: '/playback/transcode/session-1/master.m3u8',
+            protocol: 'hls',
+            headers: {},
+            header_refresh: 'none'
+          }
+        }
+      }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' }
+      })
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    const client = new SiloClient('http://silo:8080', 'secret-key');
+    const profile = planSiloPlayback(
+      { width: 3840, height: 2160 },
+      'auto',
+      'device_1234567890abcdef12345678'
+    ).requestProfile;
+
+    await client.replanPlaybackQuality(
+      'session-1',
+      'profile-1',
+      'playback-attempt-1',
+      'plan-attempt-1',
+      {
+        plan_id: 'plan:11111111111111111111111111111111',
+        plan_attempt_key: 'v3:1111111111111111',
+        delivery: 'server_transcode_hls',
+        selected_tracks: {
+          audio: { id: 'file:120:audio:0', index: 0 }
+        },
+        stream: {
+          url: '/playback/transcode/session-1/master.m3u8',
+          protocol: 'hls',
+          headers: {},
+          header_refresh: 'none'
+        }
+      },
+      '1080p-high',
+      profile
+    );
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe('http://silo:8080/api/v1/playback/session-1/replan');
+    expect(new Headers(init.headers).get('X-Profile-Id')).toBe('profile-1');
+    expect(JSON.parse(String(init.body))).toMatchObject({
+      protocol_version: 3,
+      operation: 'quality_change',
+      playback_attempt_id: 'playback-attempt-1',
+      failed_plan_id: 'plan:11111111111111111111111111111111',
+      plan_attempt_id: 'plan-attempt-1',
+      plan_attempt_key: 'v3:1111111111111111',
+      attempted_plan_keys: [],
+      attempt_count: 1,
+      quality_preference: '1080p-high',
+      position_seconds: 0,
+      selected_tracks: {
+        audio: { id: 'file:120:audio:0', index: 0 }
+      }
+    });
+  });
+
   it('returns null when Silo has no exact matching version', async () => {
     vi.stubGlobal(
       'fetch',

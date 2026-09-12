@@ -51,9 +51,20 @@ the declared SDR target.
 - Keep credentials server-side and every child resource behind an expiring
   signed Nuvi-Flow URL
 
+## Completed initial Auto cost guard
+
+- Retain 4K when Silo selects direct or remux delivery
+- If Auto instead selects a full 4K video encode, use Silo's protocol-v3
+  `quality_change` replan before returning the playback URL
+- Select the highest 1080p-or-lower rung advertised by Silo for the current
+  source; Nuvi-Flow does not maintain a competing bitrate table
+- Replan at most once, preserve fixed administrator quality choices, and keep
+  the existing single-flight session boundary around start plus replan
+
 ## Current focus and next milestones
 
-1. Bounded automatic fallback using startup and throughput evidence
+1. Runtime fallback using supported startup and segment-production evidence;
+   Silo does not currently expose encoder FPS/speed through protocol v3
 2. Capability learning with confidence, counters, and decay
 3. Concurrency and transcoder-capacity controls
 

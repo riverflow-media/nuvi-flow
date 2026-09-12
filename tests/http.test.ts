@@ -403,13 +403,131 @@ describe('Stremio and media HTTP endpoints', () => {
     });
     vi.stubGlobal('fetch', fetchMock);
 
+    const streamUrl = `/silo-stream/${encodeURIComponent(token())}`;
+    const [response, coalesced] = await Promise.all([
+      built.app.inject({ method: 'GET', url: streamUrl }),
+      built.app.inject({ method: 'GET', url: streamUrl })
+    ]);
+
+    expect(response.statusCode).toBe(302);
+    expect(coalesced.statusCode).toBe(302);
+    expect(coalesced.headers.location).toBe(response.headers.location);
+    expect(coalesced.headers['x-nuvi-flow-playback-id']).toBe(
+      response.headers['x-nuvi-flow-playback-id']
+    );
+    expect(response.headers.location).toMatch(/^\/silo-media\//);
+  });
+
+  it('replans a full 4K Auto encode once to the highest advertised 1080p rung', async () => {
+    built.settings.set('siloProfileId', 'profile-1');
+    built.settings.set('siloTranscodeQuality', 'auto');
+    built.database.sqlite.prepare(
+      "UPDATE media_files SET width=3840,height=2160,video_codec='hevc',audio_codec='truehd' WHERE id='file1'"
+    ).run();
+
+    let playbackAttemptId = '';
+    const fetchMock = vi.fn().mockImplementation(async (url: string, init?: RequestInit) => {
+      if (url.endsWith('/versions')) {
+        return new Response(JSON.stringify([{
+          file_id: 120,
+          file_path: mediaPath
+        }]), { status: 200, headers: { 'Content-Type': 'application/json' } });
+      }
+      if (url.endsWith('/playback/start')) {
+        const body = JSON.parse(String(init?.body));
+        playbackAttemptId = body.playback_attempt_id;
+        return new Response(JSON.stringify({
+          protocol_version: 3,
+          server_features: ['playback_plan_v3'],
+          outcome: 'playable',
+          session_id: 'adaptive-session',
+          playback_plan: {
+            plan_id: 'plan:11111111111111111111111111111111',
+            plan_attempt_key: 'v3:1111111111111111',
+            delivery: 'server_transcode_hls',
+            selected_tracks: {},
+            timeline: { source_start_seconds: 0 },
+            effective_recipe: {
+              video_codec: 'h264',
+              audio_codec: 'aac',
+              dynamic_range: 'sdr',
+              width: 3840,
+              height: 2160
+            },
+            available_qualities: [
+              { label: 'original', height: 2160, preserves_source: true },
+              { label: '2160p-high', height: 2160, preserves_source: false },
+              { label: '1080p-high', height: 1080, preserves_source: false },
+              { label: '720p-high', height: 720, preserves_source: false }
+            ],
+            stream: {
+              url: '/playback/transcode/adaptive-session/original.m3u8',
+              protocol: 'hls',
+              headers: {},
+              header_refresh: 'none'
+            }
+          }
+        }), { status: 201, headers: { 'Content-Type': 'application/json' } });
+      }
+      if (url.endsWith('/playback/adaptive-session/replan')) {
+        const body = JSON.parse(String(init?.body));
+        expect(body).toMatchObject({
+          operation: 'quality_change',
+          playback_attempt_id: playbackAttemptId,
+          failed_plan_id: 'plan:11111111111111111111111111111111',
+          plan_attempt_key: 'v3:1111111111111111',
+          attempted_plan_keys: [],
+          attempt_count: 1,
+          quality_preference: '1080p-high'
+        });
+        return new Response(JSON.stringify({
+          protocol_version: 3,
+          server_features: ['playback_plan_v3'],
+          outcome: 'playable',
+          session_id: 'adaptive-session',
+          playback_plan: {
+            plan_id: 'plan:22222222222222222222222222222222',
+            plan_attempt_key: 'v3:2222222222222222',
+            delivery: 'server_transcode_hls',
+            effective_recipe: {
+              video_codec: 'h264',
+              audio_codec: 'aac',
+              dynamic_range: 'sdr',
+              width: 1920,
+              height: 1080
+            },
+            stream: {
+              url: '/playback/transcode/adaptive-session/1080p-high.m3u8',
+              protocol: 'hls',
+              headers: {},
+              header_refresh: 'none'
+            }
+          }
+        }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+      }
+      return new Response(null, { status: 404 });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
     const response = await built.app.inject({
       method: 'GET',
       url: `/silo-stream/${encodeURIComponent(token())}`
     });
 
     expect(response.statusCode).toBe(302);
-    expect(response.headers.location).toMatch(/^\/silo-media\//);
+    const encodedToken = response.headers.location?.split('/').at(-1) || '';
+    expect(verifySiloMediaToken(
+      decodeURIComponent(encodedToken),
+      secret
+    )?.path).toBe(
+      '/api/v1/playback/transcode/adaptive-session/1080p-high.m3u8'
+    );
+    expect(fetchMock.mock.calls.filter(([url]) =>
+      String(url).endsWith('/replan')
+    )).toHaveLength(1);
+    expect(fetchMock.mock.calls.filter(([url]) =>
+      String(url).endsWith('/playback/start')
+    )).toHaveLength(1);
   });
 
   it('coalesces simultaneous Silo playback requests and reuses the session', async () => {

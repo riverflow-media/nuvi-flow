@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
   normalizeSiloQualityPreference,
-  planSiloPlayback
+  planSiloPlayback,
+  selectAutoTranscodeFallback
 } from '../src/services/playback/playback-policy.js';
 
 describe('conservative Silo playback policy', () => {
@@ -77,5 +78,31 @@ describe('conservative Silo playback policy', () => {
 
   it('normalizes an invalid configured quality to Auto', () => {
     expect(normalizeSiloQualityPreference('not-a-rung')).toBe('auto');
+  });
+
+  it('selects the highest advertised 1080p fallback for a full 4K Auto encode', () => {
+    expect(selectAutoTranscodeFallback('auto', {
+      delivery: 'server_transcode_hls',
+      effective_recipe: { height: 2160 },
+      available_qualities: [
+        { label: 'original' },
+        { label: '2160p-high' },
+        { label: '1080p-medium' },
+        { label: '720p-high' }
+      ]
+    })).toBe('1080p-medium');
+  });
+
+  it('retains 4K remuxes and administrator fixed-quality choices', () => {
+    const plan = {
+      delivery: 'server_remux_hls',
+      effective_recipe: { height: 2160 },
+      available_qualities: [{ label: '1080p-high' }]
+    };
+    expect(selectAutoTranscodeFallback('auto', plan)).toBeNull();
+    expect(selectAutoTranscodeFallback('2160p-high', {
+      ...plan,
+      delivery: 'server_transcode_hls'
+    })).toBeNull();
   });
 });

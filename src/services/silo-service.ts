@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import type { MediaFileRow, MediaItemRow } from '../types.js';
 import {
   SiloClient,
@@ -5,6 +6,7 @@ import {
   type SiloEpisodeReference,
   type SiloHealth,
   type SiloPlaybackDecision,
+  type SiloPlaybackPlan,
   type SiloProfile
 } from './silo.js';
 import {
@@ -21,6 +23,7 @@ export interface SiloConnectionResult {
 
 export interface SiloPlaybackResult {
   fileId: number;
+  playbackAttemptId: string;
   decision: SiloPlaybackDecision;
 }
 
@@ -127,14 +130,39 @@ export class SiloService {
       return null;
     }
 
+    const playbackAttemptId = randomUUID();
+
     return {
       fileId,
+      playbackAttemptId,
       decision: await client.startPlayback(
         fileId,
         profileId,
-        requestProfile
+        requestProfile,
+        playbackAttemptId
       )
     };
+  }
+
+  replanPlaybackQuality(
+    sessionId: string,
+    profileId: string,
+    playbackAttemptId: string,
+    currentPlan: SiloPlaybackPlan,
+    qualityPreference: string,
+    requestProfile: SiloPlaybackRequestProfile,
+    positionSeconds = 0
+  ): Promise<SiloPlaybackDecision> {
+    return this.client().replanPlaybackQuality(
+      sessionId,
+      profileId,
+      playbackAttemptId,
+      randomUUID(),
+      currentPlan,
+      qualityPreference,
+      requestProfile,
+      positionSeconds
+    );
   }
 
   fetchMedia(

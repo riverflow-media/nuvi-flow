@@ -45,6 +45,9 @@ The current integration provides:
 - Original-file direct playback as the first stream option
 - An optional Silo Auto HLS stream that asks protocol v3 to preserve the source
   resolution, including 4K, when viable
+- A bounded Auto cost guard: 4K direct/remux plans remain 4K, while a plan that
+  requires a full 4K video encode is replanned once to the highest 1080p rung
+  Silo advertises for that source
 - Conservative unknown-device declarations (H.264, AAC stereo, SDR) so Silo
   can copy compatible video, adapt audio independently, or transcode video only
   when required
@@ -73,12 +76,13 @@ The current integration provides:
 Auto currently targets the safe HLS proxy path and does not send a bandwidth
 estimate when none is known. Original-file direct playback remains the first
 stream option. Per-device capability learning, known-compatible HDR
-preservation, throughput-based fallback, and progressive/original Silo delivery
-remain later milestones.
+preservation, runtime throughput detection and further bounded fallback, and
+progressive/original Silo delivery remain later milestones.
 
 Streaming removes Nuvi-Flow's previous segment-sized startup delay and memory
-buffer. It cannot make an underspeed Silo transcode run faster than real time;
-automatic detection and fallback for that condition is the next playback
+buffer. The cost guard prevents the heaviest unknown-device route before it is
+returned, but Nuvi-Flow does not yet measure encoder speed or sustained segment
+production. Runtime detection and additional fallback remain the next playback
 milestone.
 
 New installations default to Auto. An existing saved fixed quality remains an
@@ -204,6 +208,8 @@ The password-protected dashboard provides:
 - Sonarr connection testing
 - Silo connection and profile testing
 - Silo transcode-quality selection
+- Cost-aware Auto playback: 4K direct/remux is retained, while a full 4K video
+  encode is replanned once to Silo's highest advertised 1080p rung
 - Root-folder selection
 - Quality-profile selection
 - Requested-episode or whole-series Sonarr monitoring

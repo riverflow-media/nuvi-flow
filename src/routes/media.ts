@@ -17,7 +17,10 @@ import {
   type PlaybackSessionResult
 } from '../services/playback/playback-sessions.js';
 import { deriveDeviceIdentity } from '../services/playback/device-identity.js';
-import { planSiloPlayback } from '../services/playback/playback-policy.js';
+import {
+  planSiloPlayback,
+  selectAutoTranscodeFallback
+} from '../services/playback/playback-policy.js';
 import {
   HlsManifestError,
   isHlsManifestPath,
@@ -262,7 +265,55 @@ async function serveSiloStream(
             );
           }
 
-          const { fileId, decision } = started;
+          const { fileId, playbackAttemptId } = started;
+          let { decision } = started;
+
+          const initialPlan = decision.playback_plan;
+          const fallbackQuality = initialPlan
+            ? selectAutoTranscodeFallback(
+                settings.siloTranscodeQuality,
+                initialPlan
+              )
+            : null;
+
+          if (
+            fallbackQuality &&
+            decision.session_id &&
+            initialPlan?.plan_id &&
+            initialPlan.plan_attempt_key
+          ) {
+            const replanned = await silo.replanPlaybackQuality(
+              decision.session_id,
+              settings.siloProfileId,
+              playbackAttemptId,
+              initialPlan,
+              fallbackQuality,
+              policy.requestProfile,
+              initialPlan.timeline?.source_start_seconds || 0
+            );
+
+            if (
+              replanned.outcome !== 'playable' ||
+              !replanned.playback_plan
+            ) {
+              throw new SiloPlaybackRouteError(
+                502,
+                'Silo could not create the safer Auto playback route.'
+              );
+            }
+
+            request.log.info(
+              {
+                playback_id: playbackId,
+                silo_session_id: decision.session_id,
+                from_quality: 'auto',
+                to_quality: fallbackQuality,
+                reason: 'full_4k_video_transcode_guard'
+              },
+              'Playback quality replanned'
+            );
+            decision = replanned;
+          }
 
           const plan = decision.playback_plan;
 
@@ -304,8 +355,10 @@ async function serveSiloStream(
               },
               decision: plan.delivery,
               target: {
-                quality: policy.requestProfile.qualityPreference,
-                max_resolution: policy.target.maxResolution,
+                quality: fallbackQuality || policy.requestProfile.qualityPreference,
+                max_resolution: fallbackQuality
+                  ? '1080p'
+                  : policy.target.maxResolution,
                 width: plan.effective_recipe?.width || null,
                 height: plan.effective_recipe?.height || null,
                 video_codec:
@@ -325,7 +378,7 @@ async function serveSiloStream(
                 ).filter(Boolean) || [],
               startup_ms:
                 Date.now() - startupStartedAt,
-              fallback_attempt: 0
+              fallback_attempt: fallbackQuality ? 1 : 0
             },
             'Playback session created'
           );
