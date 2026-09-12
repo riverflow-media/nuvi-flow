@@ -12,15 +12,11 @@ import {
   verifySiloMediaToken,
   verifyStreamToken
 } from '../lib/security.js';
-import {
-  type PlaybackSessionRegistry,
-  type PlaybackSessionResult
-} from '../services/playback/playback-sessions.js';
 import { deriveDeviceIdentity } from '../services/playback/device-identity.js';
 import {
-  planSiloPlayback,
-  selectAutoTranscodeFallback
-} from '../services/playback/playback-policy.js';
+  PlaybackOrchestrationError,
+  type PlaybackService
+} from '../services/playback/playback-service.js';
 import {
   HlsManifestError,
   isHlsManifestPath,
@@ -49,16 +45,6 @@ function headerValue(
   return Array.isArray(value)
     ? value[0]
     : value;
-}
-
-class SiloPlaybackRouteError extends Error {
-  constructor(
-    public readonly statusCode: number,
-    message: string
-  ) {
-    super(message);
-    this.name = 'SiloPlaybackRouteError';
-  }
 }
 
 function authorize(request: FastifyRequest, database: AppDatabase, config: AppConfig): { file: MediaFileRow; token: ReturnType<typeof verifyStreamToken> } | null {
@@ -120,8 +106,7 @@ async function serveSiloStream(
   database: AppDatabase,
   settings: SettingsService,
   config: AppConfig,
-  playbackSessions: PlaybackSessionRegistry,
-  silo: SiloService
+  playback: PlaybackService
 ): Promise<FastifyReply> {
   const authorized = authorize(
     request,
@@ -223,178 +208,22 @@ async function serveSiloStream(
     authorized.token!.deviceId
       ? 'signed_stream_token'
       : fallbackIdentity!.source;
-  const policy = planSiloPlayback(
-    authorized.file,
-    settings.siloTranscodeQuality,
-    deviceId
-  );
-
-  let sessionResult: PlaybackSessionResult;
+  let sessionResult;
 
   try {
-    sessionResult =
-      await playbackSessions.getOrCreate(
-        {
-          deviceId,
-          mediaFileId: authorized.file.id,
-          profileId: settings.siloProfileId,
-          mode: policy.mode,
-          quality: policy.requestProfile.qualityPreference,
-          audioSelection: 'conservative-aac-stereo',
-          subtitleSelection: 'none',
-          dynamicRangeMode: policy.target.dynamicRange,
-          season: episode?.season,
-          episode: episode?.episode
-        },
-        authorized.token!.exp,
-        async ({ playbackId }) => {
-          const startupStartedAt = Date.now();
-          const started =
-            await silo.startPlaybackForMedia(
-              item,
-              authorized.file,
-              settings.siloProfileId,
-              policy.requestProfile,
-              episode
-            );
-
-          if (!started) {
-            throw new SiloPlaybackRouteError(
-              404,
-              'This file could not be resolved in Silo.'
-            );
-          }
-
-          const { fileId, playbackAttemptId } = started;
-          let { decision } = started;
-
-          const initialPlan = decision.playback_plan;
-          const fallbackQuality = initialPlan
-            ? selectAutoTranscodeFallback(
-                settings.siloTranscodeQuality,
-                initialPlan
-              )
-            : null;
-
-          if (
-            fallbackQuality &&
-            decision.session_id &&
-            initialPlan?.plan_id &&
-            initialPlan.plan_attempt_key
-          ) {
-            const replanned = await silo.replanPlaybackQuality(
-              decision.session_id,
-              settings.siloProfileId,
-              playbackAttemptId,
-              initialPlan,
-              fallbackQuality,
-              policy.requestProfile,
-              initialPlan.timeline?.source_start_seconds || 0
-            );
-
-            if (
-              replanned.outcome !== 'playable' ||
-              !replanned.playback_plan
-            ) {
-              throw new SiloPlaybackRouteError(
-                502,
-                'Silo could not create the safer Auto playback route.'
-              );
-            }
-
-            request.log.info(
-              {
-                playback_id: playbackId,
-                silo_session_id: decision.session_id,
-                from_quality: 'auto',
-                to_quality: fallbackQuality,
-                reason: 'full_4k_video_transcode_guard'
-              },
-              'Playback quality replanned'
-            );
-            decision = replanned;
-          }
-
-          const plan = decision.playback_plan;
-
-          if (
-            decision.outcome !== 'playable' ||
-            !plan ||
-            ![
-              'server_remux_hls',
-              'server_transcode_hls'
-            ].includes(plan.delivery) ||
-            plan.stream.protocol !== 'hls' ||
-            !plan.stream.url.startsWith(
-              '/playback/'
-            )
-          ) {
-            throw new SiloPlaybackRouteError(
-              502,
-              'Silo did not return a usable transcoded HLS stream.'
-            );
-          }
-
-          request.log.info(
-            {
-              playback_id: playbackId,
-              device_id: deviceId,
-              device_identity_source:
-                deviceIdentitySource,
-              media_file_id: authorized.file.id,
-              silo_file_id: fileId,
-              silo_session_id:
-                decision.session_id || null,
-              source: {
-                width: authorized.file.width,
-                height: authorized.file.height,
-                video_codec:
-                  authorized.file.video_codec,
-                audio_codec:
-                  authorized.file.audio_codec
-              },
-              decision: plan.delivery,
-              target: {
-                quality: fallbackQuality || policy.requestProfile.qualityPreference,
-                max_resolution: fallbackQuality
-                  ? '1080p'
-                  : policy.target.maxResolution,
-                width: plan.effective_recipe?.width || null,
-                height: plan.effective_recipe?.height || null,
-                video_codec:
-                  plan.effective_recipe?.video_codec ||
-                  policy.target.videoCodec,
-                audio_codec:
-                  plan.effective_recipe?.audio_codec ||
-                  policy.target.audioCodec,
-                dynamic_range:
-                  plan.effective_recipe?.dynamic_range ||
-                  policy.target.dynamicRange
-              },
-              reason: plan.decision_reason || policy.reason,
-              transformations:
-                plan.transformations?.map(
-                  transformation => transformation.name
-                ).filter(Boolean) || [],
-              startup_ms:
-                Date.now() - startupStartedAt,
-              fallback_attempt: fallbackQuality ? 1 : 0
-            },
-            'Playback session created'
-          );
-
-          return {
-            siloSessionId:
-              decision.session_id || null,
-            siloFileId: fileId,
-            upstreamPath:
-              '/api/v1' + plan.stream.url,
-            delivery: plan.delivery
-          };
-        }
-      );
+    const result = await playback.orchestrate({
+      item,
+      file: authorized.file,
+      deviceId,
+      deviceIdentitySource,
+      profileId: settings.siloProfileId,
+      configuredQuality: settings.siloTranscodeQuality,
+      authorizationExpiresAt: authorized.token!.exp,
+      episode
+    });
+    sessionResult = result.sessionResult;
   } catch (error) {
-    if (error instanceof SiloPlaybackRouteError) {
+    if (error instanceof PlaybackOrchestrationError) {
       return reply
         .code(error.statusCode)
         .header('Cache-Control', 'no-store')
@@ -431,7 +260,8 @@ async function serveSiloMedia(
   reply: FastifyReply,
   settings: SettingsService,
   config: AppConfig,
-  silo: SiloService
+  silo: SiloService,
+  playback: PlaybackService
 ): Promise<FastifyReply> {
   const { token } =
     request.params as { token: string };
@@ -463,6 +293,8 @@ async function serveSiloMedia(
         error: 'Silo is not configured.'
       });
   }
+
+  playback.touchMediaPath(payload.path);
 
   const upstreamHeaders = new Headers();
 
@@ -607,7 +439,7 @@ export function registerMediaRoutes(
   database: AppDatabase,
   config: AppConfig,
   settings: SettingsService,
-  playbackSessions: PlaybackSessionRegistry,
+  playback: PlaybackService,
   silo: SiloService
 ): void {
   const options = { config: { rateLimit: { max: 1200, timeWindow: '1 minute' } } };
@@ -624,8 +456,7 @@ export function registerMediaRoutes(
         database,
         settings,
         config,
-        playbackSessions,
-        silo
+        playback
       )
   );
 
@@ -638,7 +469,8 @@ export function registerMediaRoutes(
         reply,
         settings,
         config,
-        silo
+        silo,
+        playback
       )
   );
   app.head(
@@ -650,7 +482,8 @@ export function registerMediaRoutes(
         reply,
         settings,
         config,
-        silo
+        silo,
+        playback
       )
   );
   app.get('/subtitles/:token/:subtitleId', { config: { rateLimit: { max: 600, timeWindow: '1 minute' } } }, async (request, reply) => {

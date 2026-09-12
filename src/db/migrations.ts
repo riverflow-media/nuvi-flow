@@ -113,5 +113,49 @@ export const migrations = [
   );
 
   CREATE INDEX IF NOT EXISTS silo_file_mappings_status_idx
-    ON silo_file_mappings(status);`
+    ON silo_file_mappings(status);`,
+  `CREATE TABLE IF NOT EXISTS playback_devices (
+    id TEXT PRIMARY KEY,
+    identity_source TEXT NOT NULL,
+    first_seen_at INTEGER NOT NULL,
+    last_seen_at INTEGER NOT NULL
+  );
+
+  CREATE INDEX IF NOT EXISTS playback_devices_last_seen_idx
+    ON playback_devices(last_seen_at);
+
+  CREATE TABLE IF NOT EXISTS device_capabilities (
+    device_id TEXT NOT NULL REFERENCES playback_devices(id) ON DELETE CASCADE,
+    category TEXT NOT NULL CHECK(category IN (
+      'max_resolution',
+      'video_codec',
+      'bit_depth',
+      'container',
+      'hdr',
+      'audio_codec',
+      'audio_passthrough',
+      'subtitle'
+    )),
+    capability TEXT NOT NULL,
+    supported INTEGER NOT NULL CHECK(supported IN (0,1)),
+    evidence TEXT NOT NULL CHECK(evidence IN (
+      'declared',
+      'observed_success',
+      'observed_failure',
+      'user_override'
+    )),
+    confidence REAL NOT NULL DEFAULT 0 CHECK(confidence >= 0 AND confidence <= 1),
+    success_count INTEGER NOT NULL DEFAULT 0 CHECK(success_count >= 0),
+    failure_count INTEGER NOT NULL DEFAULT 0 CHECK(failure_count >= 0),
+    first_observed_at INTEGER NOT NULL,
+    last_observed_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL,
+    PRIMARY KEY(device_id, category, capability)
+  );
+
+  CREATE INDEX IF NOT EXISTS device_capabilities_device_idx
+    ON device_capabilities(device_id);
+
+  CREATE INDEX IF NOT EXISTS device_capabilities_evidence_idx
+    ON device_capabilities(evidence);`
 ] as const;

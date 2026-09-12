@@ -171,4 +171,13 @@ export class SiloService {
   ): Promise<Response> {
     return this.client().fetchMedia(pathname, init);
   }
+
+  async keepPlaybackAlive(pathname: string): Promise<boolean> {
+    const response = await this.fetchMedia(pathname, {
+      method: 'HEAD',
+      signal: AbortSignal.timeout(10_000)
+    });
+    await response.body?.cancel();
+    return response.ok;
+  }
 }

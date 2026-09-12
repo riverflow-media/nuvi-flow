@@ -88,6 +88,48 @@ export const siloFileMappings = sqliteTable('silo_file_mappings', {
   index('silo_file_mappings_status_idx').on(table.status)
 ]);
 
+export const playbackDevices = sqliteTable('playback_devices', {
+  id: text('id').primaryKey(),
+  identitySource: text('identity_source').notNull(),
+  firstSeenAt: integer('first_seen_at').notNull(),
+  lastSeenAt: integer('last_seen_at').notNull()
+}, (table) => [
+  index('playback_devices_last_seen_idx').on(table.lastSeenAt)
+]);
+
+export const deviceCapabilities = sqliteTable('device_capabilities', {
+  deviceId: text('device_id').notNull().references(() => playbackDevices.id, { onDelete: 'cascade' }),
+  category: text('category', { enum: [
+    'max_resolution',
+    'video_codec',
+    'bit_depth',
+    'container',
+    'hdr',
+    'audio_codec',
+    'audio_passthrough',
+    'subtitle'
+  ] }).notNull(),
+  capability: text('capability').notNull(),
+  supported: integer('supported', { mode: 'boolean' }).notNull(),
+  evidence: text('evidence', { enum: [
+    'declared',
+    'observed_success',
+    'observed_failure',
+    'user_override'
+  ] }).notNull(),
+  confidence: real('confidence').notNull().default(0),
+  successCount: integer('success_count').notNull().default(0),
+  failureCount: integer('failure_count').notNull().default(0),
+  firstObservedAt: integer('first_observed_at').notNull(),
+  lastObservedAt: integer('last_observed_at').notNull(),
+  updatedAt: integer('updated_at').notNull()
+}, (table) => [
+  uniqueIndex('device_capabilities_device_category_capability_uq')
+    .on(table.deviceId, table.category, table.capability),
+  index('device_capabilities_device_idx').on(table.deviceId),
+  index('device_capabilities_evidence_idx').on(table.evidence)
+]);
+
 export const externalSubtitles = sqliteTable('external_subtitles', {
   id: text('id').primaryKey(),
   mediaFileId: text('media_file_id').notNull().references(() => mediaFiles.id, { onDelete: 'cascade' }),

@@ -21,7 +21,7 @@ describe('database migrations', () => {
     const databasePath = path.join(directory, 'media.db');
     const legacy = new Database(databasePath);
     legacy.exec('CREATE TABLE _migrations (id INTEGER PRIMARY KEY, applied_at INTEGER NOT NULL)');
-    migrations.slice(0, 4).forEach((sql, index) => {
+    migrations.slice(0, -1).forEach((sql, index) => {
       legacy.exec(sql);
       legacy.prepare('INSERT INTO _migrations (id,applied_at) VALUES (?,?)').run(index + 1, Date.now());
     });
@@ -36,12 +36,24 @@ describe('database migrations', () => {
     expect(upgraded.sqlite.prepare(
       "SELECT name FROM sqlite_master WHERE type='table' AND name='silo_file_mappings'"
     ).get()).toBeTruthy();
+    expect(upgraded.sqlite.prepare(
+      "SELECT name FROM sqlite_master WHERE type='table' AND name='playback_devices'"
+    ).get()).toBeTruthy();
+    expect(upgraded.sqlite.prepare(
+      "SELECT name FROM sqlite_master WHERE type='table' AND name='device_capabilities'"
+    ).get()).toBeTruthy();
 
     const backup = new Database(backupPath!, { readonly: true });
     expect(backup.pragma('quick_check', { simple: true })).toBe('ok');
     expect(backup.prepare("SELECT value FROM settings WHERE key='sentinel'").get()).toEqual({ value: 'preserved' });
     expect(backup.prepare(
       "SELECT name FROM sqlite_master WHERE type='table' AND name='silo_file_mappings'"
+    ).get()).toBeTruthy();
+    expect(backup.prepare(
+      "SELECT name FROM sqlite_master WHERE type='table' AND name='playback_devices'"
+    ).get()).toBeUndefined();
+    expect(backup.prepare(
+      "SELECT name FROM sqlite_master WHERE type='table' AND name='device_capabilities'"
     ).get()).toBeUndefined();
     backup.close();
     upgraded.close();

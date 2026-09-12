@@ -19,6 +19,8 @@ import { registerMediaRoutes } from './routes/media.js';
 import { registerStremioRoutes } from './routes/stremio.js';
 import { MediaScanner } from './services/scanner.js';
 import { PlaybackSessionRegistry } from './services/playback/playback-sessions.js';
+import { DeviceCapabilityStore } from './services/playback/device-capabilities.js';
+import { PlaybackService } from './services/playback/playback-service.js';
 import { RequestService } from './services/requester.js';
 import { SiloService } from './services/silo-service.js';
 import { SiloFileMappingStore } from './services/silo-file-mappings.js';
@@ -34,6 +36,8 @@ export interface BuiltApp {
   requester: RequestService;
   silo: SiloService;
   playbackSessions: PlaybackSessionRegistry;
+  deviceCapabilities: DeviceCapabilityStore;
+  playback: PlaybackService;
 }
 
 export async function buildApp(config: AppConfig): Promise<BuiltApp> {
@@ -73,8 +77,16 @@ export async function buildApp(config: AppConfig): Promise<BuiltApp> {
   const silo = new SiloService(settings, siloMappings);
   const playbackSessions =
     new PlaybackSessionRegistry();
+  const deviceCapabilities = new DeviceCapabilityStore(database);
+  const playback = new PlaybackService(
+    silo,
+    playbackSessions,
+    deviceCapabilities,
+    app.log
+  );
 
   app.addHook('onClose', async () => {
+    playback.close();
     playbackSessions.close();
   });
   if (!settings.adminPasswordHash) settings.set('adminPasswordHash', await hashPassword(config.adminPassword));
@@ -182,7 +194,7 @@ export async function buildApp(config: AppConfig): Promise<BuiltApp> {
     database,
     config,
     settings,
-    playbackSessions,
+    playback,
     silo
   );
   registerAdminRoutes(app, database, settings, scanner, tmdb, requester, config, silo);
@@ -201,6 +213,8 @@ export async function buildApp(config: AppConfig): Promise<BuiltApp> {
     tmdb,
     requester,
     silo,
-    playbackSessions
+    playbackSessions,
+    deviceCapabilities,
+    playback
   };
 }

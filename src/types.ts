@@ -71,6 +71,43 @@ export interface SiloFileMappingRow {
   updated_at: number;
 }
 
+export type DeviceCapabilityCategory =
+  | 'max_resolution'
+  | 'video_codec'
+  | 'bit_depth'
+  | 'container'
+  | 'hdr'
+  | 'audio_codec'
+  | 'audio_passthrough'
+  | 'subtitle';
+
+export type DeviceCapabilityEvidence =
+  | 'declared'
+  | 'observed_success'
+  | 'observed_failure'
+  | 'user_override';
+
+export interface PlaybackDeviceRow {
+  id: string;
+  identity_source: string;
+  first_seen_at: number;
+  last_seen_at: number;
+}
+
+export interface DeviceCapabilityRow {
+  device_id: string;
+  category: DeviceCapabilityCategory;
+  capability: string;
+  supported: number;
+  evidence: DeviceCapabilityEvidence;
+  confidence: number;
+  success_count: number;
+  failure_count: number;
+  first_observed_at: number;
+  last_observed_at: number;
+  updated_at: number;
+}
+
 export interface ExternalSubtitleRow {
   id: string;
   media_file_id: string;

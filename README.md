@@ -71,13 +71,22 @@ The current integration provides:
 - Short-lived reuse of active Silo sessions, preventing repeated client requests from starting overlapping FFmpeg jobs
 - Signed pseudonymous device identity carried from stream discovery into playback,
   allowing fresh URLs from the same identifiable device to reuse its session
+- Persistent pseudonymous device records and capability evidence with declared,
+  observed-success, observed-failure, and user-override provenance; raw IP,
+  user-agent, and client-header values are not stored
+- A dedicated playback orchestration service that owns capability lookup, policy
+  planning, session reuse, Silo start/replan validation, and playback summaries
+- Bounded pause/resume liveness for clients without pause events: recent proxy
+  traffic extends the local lease and lightweight manifest checks keep the Silo
+  session available during a short pause; abandoned sessions still expire
 - A unique Nuvi-Flow playback ID in structured session logs and the `X-Nuvi-Flow-Playback-Id` response header
 
 Auto currently targets the safe HLS proxy path and does not send a bandwidth
 estimate when none is known. Original-file direct playback remains the first
-stream option. Per-device capability learning, known-compatible HDR
-preservation, runtime throughput detection and further bounded fallback, and
-progressive/original Silo delivery remain later milestones.
+stream option. Explicit supported overrides can be represented by the capability
+foundation, but automatic learning and its admin controls are not enabled yet.
+Known-compatible HDR preservation, runtime throughput detection and further
+bounded fallback, and progressive/original Silo delivery remain later milestones.
 
 Streaming removes Nuvi-Flow's previous segment-sized startup delay and memory
 buffer. The cost guard prevents the heaviest unknown-device route before it is
@@ -94,6 +103,12 @@ available, Nuvi-Flow hashes coarse client hints and network context together wit
 the private addon installation scope. It does not store those raw inputs or use
 invasive browser fingerprinting. Identical clients behind the same proxy may be
 indistinguishable until the client supplies a device identifier.
+
+Capability evidence is keyed only by that pseudonymous device ID. Generic client
+profiles never become support claims. Until explicit evidence exists, playback
+continues to use the conservative H.264/AAC/SDR policy. Capability changes are
+included in the session key, so a session planned under an older capability
+snapshot cannot be incorrectly reused.
 
 For exact-path matching to work, the same media file must have the same container path in Nuvi-Flow and Silo. For example, mount the library as `/media/movies` in both containers rather than `/media/movies` in one and `/movies` in the other.
 

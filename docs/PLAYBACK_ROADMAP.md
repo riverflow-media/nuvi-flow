@@ -19,6 +19,24 @@ before its image is published.
 - Persistent, server-scoped Silo file mappings with exact-path validation,
   scan-time invalidation, deletion cleanup, and a verified pre-migration SQLite
   backup
+- Persistent pseudonymous playback-device and capability-evidence tables with
+  support state, provenance, confidence, success/failure counters, and timestamps
+- User overrides protected from later automatic evidence writes; generic device
+  profiles and raw fingerprinting inputs are never stored as capability facts
+- Route-independent playback orchestration for capability lookup, policy planning,
+  session keying/reuse, Silo start/replan validation, and structured summaries
+- Capability snapshot revisions included in playback keys so changed evidence
+  cannot reuse a session created under an older policy input
+
+## Completed pause/resume liveness foundation
+
+- Treat actual proxied manifest and segment requests as local session activity
+- While that bounded local lease remains active, send lightweight manifest HEAD
+  requests so Silo does not classify a Nuvio pause as an abandoned unpaused session
+- Keep the lease capped by the signed playback authorization and stop liveness
+  checks after local expiry, preventing indefinite abandoned GPU work
+- Preserve Silo's existing reconstruction and segment recovery behavior; no
+  speculative retry loop or hidden replacement transcode is introduced
 
 ## Completed conservative Auto playback policy
 
@@ -65,7 +83,8 @@ the declared SDR target.
 
 1. Runtime fallback using supported startup and segment-production evidence;
    Silo does not currently expose encoder FPS/speed through protocol v3
-2. Capability learning with confidence, counters, and decay
+2. Capability learning rules with confidence thresholds and decay, followed by
+   task-focused admin controls for explicit device overrides
 3. Concurrency and transcoder-capacity controls
 
 ## Later interface work

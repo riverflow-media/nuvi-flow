@@ -9,6 +9,7 @@ export interface PlaybackKeyParts {
   audioSelection: string;
   subtitleSelection: string;
   dynamicRangeMode: string;
+  capabilityRevision?: string;
   season?: number;
   episode?: number;
 }
@@ -29,6 +30,7 @@ export interface PlaybackSession extends PlaybackSessionStart {
   createdAt: number;
   lastAccess: number;
   expiresAt: number;
+  maximumExpiresAt: number;
 }
 
 export type PlaybackSessionSource =
@@ -70,6 +72,7 @@ export function createPlaybackKey(
     audioSelection: parts.audioSelection,
     subtitleSelection: parts.subtitleSelection,
     dynamicRangeMode: parts.dynamicRangeMode,
+    capabilityRevision: normalizedKeyValue(parts.capabilityRevision),
     season: normalizedKeyValue(parts.season),
     episode: normalizedKeyValue(parts.episode)
   });
@@ -136,6 +139,10 @@ export class PlaybackSessionRegistry {
     if (active) {
       if (active.expiresAt > now) {
         active.lastAccess = now;
+        active.expiresAt = Math.min(
+          active.maximumExpiresAt,
+          now + this.sessionTtlMs
+        );
         return {
           session: active,
           source: 'reused'
@@ -174,7 +181,8 @@ export class PlaybackSessionRegistry {
         expiresAt: Math.min(
           maximumExpiresAt,
           createdAt + this.sessionTtlMs
-        )
+        ),
+        maximumExpiresAt
       };
 
       this.activeSessions.set(
@@ -218,6 +226,30 @@ export class PlaybackSessionRegistry {
     return removed;
   }
 
+  touchUpstreamPath(pathname: string): boolean {
+    const requestedRoot = playbackTransportRoot(pathname);
+    if (!requestedRoot) return false;
+    const now = this.now();
+
+    for (const session of this.activeSessions.values()) {
+      if (session.expiresAt <= now) continue;
+      if (playbackTransportRoot(session.upstreamPath) !== requestedRoot) continue;
+      session.lastAccess = now;
+      session.expiresAt = Math.min(
+        session.maximumExpiresAt,
+        now + this.sessionTtlMs
+      );
+      return true;
+    }
+
+    return false;
+  }
+
+  activeSnapshot(): PlaybackSession[] {
+    this.cleanupExpired();
+    return [...this.activeSessions.values()].map(session => ({ ...session }));
+  }
+
   counts(): { pending: number; active: number } {
     return {
       pending: this.pendingSessions.size,
@@ -233,4 +265,9 @@ export class PlaybackSessionRegistry {
     this.pendingSessions.clear();
     this.activeSessions.clear();
   }
+}
+
+export function playbackTransportRoot(pathname: string): string | null {
+  const match = pathname.match(/^(.*\/playback\/(?:transcode\/)?[^/?#]+)/);
+  return match?.[1] || null;
 }

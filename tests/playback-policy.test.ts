@@ -76,6 +76,43 @@ describe('conservative Silo playback policy', () => {
     expect(plan.requestProfile.qualityPreference).toBe('1080p-medium');
   });
 
+  it('uses only explicit supported overrides as device capability claims', () => {
+    const plan = planSiloPlayback(
+      { width: 3840, height: 2160 },
+      'auto',
+      deviceId,
+      {
+        deviceId,
+        revision: 'revision-1',
+        capabilities: [
+          {
+            category: 'video_codec', capability: 'hevc', supported: true,
+            evidence: 'user_override', confidence: 1, successCount: 0,
+            failureCount: 0, firstObservedAt: 1, lastObservedAt: 1, updatedAt: 1
+          },
+          {
+            category: 'hdr', capability: 'hdr10', supported: true,
+            evidence: 'user_override', confidence: 1, successCount: 0,
+            failureCount: 0, firstObservedAt: 1, lastObservedAt: 1, updatedAt: 1
+          },
+          {
+            category: 'audio_codec', capability: 'truehd', supported: true,
+            evidence: 'observed_success', confidence: .9, successCount: 3,
+            failureCount: 0, firstObservedAt: 1, lastObservedAt: 1, updatedAt: 1
+          }
+        ]
+      }
+    );
+
+    expect(plan.reason).toBe('explicit_device_overrides');
+    expect(plan.requestProfile.clientCapabilities).toMatchObject({
+      codecs_video: ['h264', 'hevc'],
+      codecs_audio: ['aac'],
+      hdr: true
+    });
+    expect(plan.target.dynamicRange).toBe('hdr');
+  });
+
   it('normalizes an invalid configured quality to Auto', () => {
     expect(normalizeSiloQualityPreference('not-a-rung')).toBe('auto');
   });

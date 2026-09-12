@@ -1,4 +1,5 @@
 import type { MediaFileRow } from '../../types.js';
+import type { DeviceCapabilitySnapshot } from './device-capabilities.js';
 
 export const siloQualityPreferences = [
   'auto',
@@ -68,14 +69,14 @@ export interface SiloPlaybackRequestProfile {
 
 export interface PlaybackPolicyPlan {
   mode: 'auto-silo-hls' | 'fixed-silo-hls';
-  reason: 'conservative_unknown_device';
+  reason: 'conservative_unknown_device' | 'explicit_device_overrides';
   requestProfile: SiloPlaybackRequestProfile;
   target: {
     maxResolution: string;
     videoCodec: 'h264';
     audioCodec: 'aac';
     maxAudioChannels: 2;
-    dynamicRange: 'sdr';
+    dynamicRange: 'sdr' | 'hdr';
   };
 }
 
@@ -160,16 +161,49 @@ export function normalizeSiloQualityPreference(
 export function planSiloPlayback(
   file: Pick<MediaFileRow, 'width' | 'height'>,
   configuredQuality: string,
-  deviceId: string
+  deviceId: string,
+  capabilitySnapshot?: DeviceCapabilitySnapshot
 ): PlaybackPolicyPlan {
   const qualityPreference = normalizeSiloQualityPreference(configuredQuality);
   const maxResolution = sourceResolutionCeiling(file);
+  const userOverrides = capabilitySnapshot?.capabilities.filter(
+    capability => capability.evidence === 'user_override' && capability.supported
+  ) || [];
+  const supportedVideoCodecs = new Set(['h264']);
+  const supportedAudioCodecs = new Set(['aac']);
+  const allowedVideoCodecs = new Set(['h264', 'hevc', 'av1', 'vp9']);
+  const allowedAudioCodecs = new Set([
+    'aac', 'ac3', 'eac3', 'opus', 'dts', 'dts-hd', 'truehd'
+  ]);
+
+  for (const override of userOverrides) {
+    if (
+      override.category === 'video_codec' &&
+      allowedVideoCodecs.has(override.capability)
+    ) {
+      supportedVideoCodecs.add(override.capability);
+    }
+    if (
+      override.category === 'audio_codec' &&
+      allowedAudioCodecs.has(override.capability)
+    ) {
+      supportedAudioCodecs.add(override.capability);
+    }
+  }
+
+  const hdr = userOverrides.some(
+    override => override.category === 'hdr' &&
+      ['hdr10', 'hdr10+', 'dolby_vision'].includes(override.capability)
+  );
+  const videoCodecs = [...supportedVideoCodecs];
+  const audioCodecs = [...supportedAudioCodecs];
+  const usedOverrides = videoCodecs.length > 1 || audioCodecs.length > 1 || hdr;
   const hls = {
     enabled: true,
     supported_on_device: true,
     containers: ['hls'],
-    video_codecs: ['h264'],
-    audio_decode_codecs: ['aac'],
+    video_codecs: videoCodecs,
+    audio_decode_codecs: audioCodecs,
     audio_passthrough_codecs: [],
     max_channels: 2,
     subtitles: {
@@ -190,18 +224,20 @@ export function planSiloPlayback(
     mode: qualityPreference === 'auto'
       ? 'auto-silo-hls'
       : 'fixed-silo-hls',
-    reason: 'conservative_unknown_device',
+    reason: usedOverrides
+      ? 'explicit_device_overrides'
+      : 'conservative_unknown_device',
     requestProfile: {
       qualityPreference,
       clientCapabilities: {
         video_evidence: 'declared',
         audio_evidence: 'declared',
-        codecs_video: ['h264'],
-        codecs_video_hardware: ['h264'],
-        codecs_audio: ['aac'],
+        codecs_video: videoCodecs,
+        codecs_video_hardware: videoCodecs,
+        codecs_audio: audioCodecs,
         containers: ['hls'],
         max_resolution: maxResolution,
-        hdr: false
+        hdr
       },
       clientPlaybackContext: {
         form_factor: 'unknown',
@@ -211,7 +247,9 @@ export function planSiloPlayback(
           manufacturer: 'Nuvi-Flow',
           model: 'HLS Proxy',
           platform_details: {
-            policy: 'conservative_auto_v1'
+            policy: usedOverrides
+              ? 'explicit_overrides_v1'
+              : 'conservative_auto_v1'
           }
         },
         output: {
@@ -225,7 +263,7 @@ export function planSiloPlayback(
       videoCodec: 'h264',
       audioCodec: 'aac',
       maxAudioChannels: 2,
-      dynamicRange: 'sdr'
+      dynamicRange: hdr ? 'hdr' : 'sdr'
     }
   };
 }

@@ -241,6 +241,7 @@ describe('PlaybackSessionRegistry', () => {
     ['audio', { audioSelection: 'track-2' }],
     ['subtitle', { subtitleSelection: 'pgs-1' }],
     ['dynamic range', { dynamicRangeMode: 'hdr' }],
+    ['capability revision', { capabilityRevision: 'new-revision' }],
     ['episode', { season: 1, episode: 2 }]
   ])('does not share sessions across a different %s key', async (_name, change) => {
     const create = vi.fn(async () => started);
@@ -261,6 +262,27 @@ describe('PlaybackSessionRegistry', () => {
     );
 
     expect(create).toHaveBeenCalledTimes(2);
+    registry.close();
+  });
+
+  it('extends a bounded lease when proxied media from the session is requested', async () => {
+    let now = 1_000;
+    const registry = new PlaybackSessionRegistry({
+      sessionTtlMs: 100,
+      cleanupIntervalMs: 0,
+      now: () => now
+    });
+    await registry.getOrCreate(baseKey, 10_000, async () => started);
+
+    now = 1_050;
+    expect(registry.touchUpstreamPath(
+      '/api/v1/playback/transcode/silo-session-a/segment/seg_00001.ts'
+    )).toBe(true);
+    now = 1_101;
+    expect(registry.cleanupExpired()).toBe(0);
+    expect(registry.activeSnapshot()).toHaveLength(1);
+    now = 1_151;
+    expect(registry.cleanupExpired()).toBe(1);
     registry.close();
   });
 });
