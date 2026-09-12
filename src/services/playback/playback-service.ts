@@ -2,6 +2,10 @@ import type { MediaFileRow, MediaItemRow } from '../../types.js';
 import type { SiloService } from '../silo-service.js';
 import type { SiloEpisodeReference } from '../silo.js';
 import type { DeviceCapabilityStore } from './device-capabilities.js';
+import type {
+  FallbackAddonService,
+  FallbackPlaybackSession
+} from './fallback-addon.js';
 import {
   planSiloPlayback,
   type PlaybackPolicyPlan
@@ -31,6 +35,8 @@ export interface PlaybackOrchestrationInput {
   configuredQuality: string;
   authorizationExpiresAt: number;
   episode?: SiloEpisodeReference;
+  networkEstimateMbps?: number | null;
+  networkContextId?: string;
 }
 
 export interface PlaybackOrchestrationResult {
@@ -60,6 +66,7 @@ export class PlaybackService {
   private readonly keepAliveIdleAfterMs: number;
   private readonly now: () => number;
   private keepAliveRunning = false;
+  private fallbackAddon: FallbackAddonService | null = null;
 
   constructor(
     private readonly silo: SiloService,
@@ -80,6 +87,35 @@ export class PlaybackService {
     } else {
       this.keepAliveTimer = null;
     }
+  }
+
+  setFallbackAddon(service: FallbackAddonService): void {
+    this.fallbackAddon = service;
+  }
+
+  async tryFallback(
+    input: PlaybackOrchestrationInput
+  ): Promise<FallbackPlaybackSession | null> {
+    if (!this.fallbackAddon) return null;
+    this.capabilities.touchDevice(input.deviceId, input.deviceIdentitySource);
+    const capabilitySnapshot = this.capabilities.getSnapshot(input.deviceId);
+    const policy = planSiloPlayback(
+      input.file,
+      input.configuredQuality,
+      input.deviceId,
+      capabilitySnapshot
+    );
+    if (
+      policy.mode !== 'auto-silo' ||
+      !this.fallbackAddon.shouldTryForLocal(
+        input.file,
+        policy.target.likelyVideoTranscode,
+        input.networkEstimateMbps
+      )
+    ) {
+      return null;
+    }
+    return this.fallbackAddon.tryPlayback(input);
   }
 
   touchMediaPath(pathname: string): boolean {

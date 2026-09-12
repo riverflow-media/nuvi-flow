@@ -4,6 +4,7 @@ import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { loadConfig } from '../src/config.js';
 import {
+  createFallbackMediaToken,
   createSiloMediaToken,
   createStreamToken,
   verifySiloMediaToken,
@@ -58,6 +59,12 @@ describe('Stremio and media HTTP endpoints', () => {
     return `${built.settings.addonAccessPath}${pathname}`;
   }
 
+  it('keeps the deployment health endpoint ready after the migration', async () => {
+    const response = await built.app.inject({ method: 'GET', url: '/health' });
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({ status: 'ok' });
+  });
+
   it('requires the private addon URL for every Stremio resource', async () => {
     expect(built.settings.addonAccessToken).toMatch(/^[A-Za-z0-9_-]{43}$/);
 
@@ -97,6 +104,46 @@ describe('Stremio and media HTTP endpoints', () => {
     expect(response.statusCode).toBe(200);
     expect(response.json().streams[0]).toMatchObject({ title: '1080p • H.264 • AAC 5.1' });
     expect(response.json().streams[0].url).toMatch(/^https:\/\/media\.example\.test\/media\//);
+  });
+
+  it('plays missing media through AIO while still queuing Radarr or Sonarr', async () => {
+    built.settings.set('fallbackAddonEnabled', 'true');
+    built.settings.set('fallbackAddonUseForMissing', 'true');
+    built.settings.set('fallbackAddonManifestUrl', 'https://aio.example/private/manifest.json');
+    const enqueue = vi.spyOn(built.requester, 'enqueueMissing');
+    vi.spyOn(built.fallbackAddon, 'tryPlayback').mockResolvedValue({
+      id: '11111111-1111-4111-8111-111111111111',
+      playbackId: 'playback-missing',
+      upstreamUrl: 'https://cdn.example/private.mkv',
+      requestHeaders: {},
+      label: '2160p WEB-DL',
+      candidates: [],
+      candidateIndex: 0,
+      candidateVerified: false,
+      durationSeconds: null,
+      deviceId: 'device_1234567890abcdef12345678',
+      createdAt: Date.now(),
+      lastAccess: Date.now(),
+      expiresAt: Date.now() + 60_000,
+      maximumExpiresAt: Date.now() + 60_000
+    });
+
+    const response = await built.app.inject({
+      method: 'GET',
+      url: addonUrl('/stream/movie/tt9999999.json'),
+      headers: { 'x-nuvi-flow-device-id': 'living-room' }
+    });
+    expect(response.statusCode).toBe(200);
+    expect(enqueue).toHaveBeenCalledWith('movie', 'tt9999999');
+    expect(response.json().streams).toHaveLength(1);
+    expect(response.json().streams[0]).toMatchObject({
+      name: 'Nuvi-Flow Auto',
+      title: 'Auto • fallback addon • immediate playback'
+    });
+    expect(response.json().streams[0].url).toMatch(
+      /^https:\/\/media\.example\.test\/fallback-media\//
+    );
+    expect(response.body).not.toContain('private.mkv');
   });
 
   it('carries stable, distinct device identities in fresh stream URLs', async () => {
@@ -588,6 +635,115 @@ describe('Stremio and media HTTP endpoints', () => {
     expect(streamed.headers['content-length']).toBe('10');
     expect(streamed.headers['content-range']).toBe('bytes 10-19/100');
     expect(streamed.headers['accept-ranges']).toBe('bytes');
+  });
+
+  it('proxies fallback media by opaque session token with byte ranges', async () => {
+    const expiresAt = Date.now() + 60_000;
+    const sessionId = '11111111-1111-4111-8111-111111111111';
+    const session = {
+      id: sessionId,
+      playbackId: 'fallback-playback',
+      upstreamUrl: 'https://cdn.example/movie.mkv?token=upstream-secret',
+      requestHeaders: {},
+      label: 'Cached 2160p',
+      candidates: [{
+        url: 'https://cdn.example/movie.mkv?token=upstream-secret',
+        label: 'Cached 2160p',
+        requestHeaders: {},
+        videoSizeBytes: null,
+        resolutionHeight: 2160
+      }],
+      candidateIndex: 0,
+      candidateVerified: false,
+      durationSeconds: 10_800,
+      createdAt: Date.now(),
+      lastAccess: Date.now(),
+      expiresAt,
+      maximumExpiresAt: expiresAt
+    };
+    vi.spyOn(built.fallbackAddon, 'getSession').mockReturnValue(session);
+    const fetchMedia = vi.spyOn(built.fallbackAddon, 'fetchMedia')
+      .mockImplementation(async (_session, init) => {
+        expect(new Headers(init.headers).get('range')).toBe('bytes=10-19');
+        return new Response('abcdefghij', {
+          status: 206,
+          headers: {
+            'Content-Type': 'video/mp4',
+            'Content-Length': '10',
+            'Content-Range': 'bytes 10-19/100',
+            'Accept-Ranges': 'bytes'
+          }
+        });
+      });
+    const { token: fallbackToken } = createFallbackMediaToken(
+      sessionId, expiresAt, secret
+    );
+    expect(fallbackToken).not.toContain('upstream-secret');
+    const response = await built.app.inject({
+      method: 'GET',
+      url: `/fallback-media/${encodeURIComponent(fallbackToken)}`,
+      headers: { range: 'bytes=10-19' }
+    });
+    expect(response.statusCode).toBe(206);
+    expect(response.body).toBe('abcdefghij');
+    expect(response.headers['content-range']).toBe('bytes 10-19/100');
+    expect(fetchMedia).toHaveBeenCalledOnce();
+  });
+
+  it('uses a safe fallback candidate before a likely Auto video transcode', async () => {
+    built.settings.set('siloProfileId', 'profile-1');
+    built.settings.set('siloTranscodeQuality', 'auto');
+    built.settings.set('fallbackAddonEnabled', 'true');
+    built.settings.set(
+      'fallbackAddonManifestUrl',
+      'https://aio.example/private-install/manifest.json'
+    );
+    built.database.sqlite.prepare(
+      "UPDATE media_files SET width=3840,height=2160,video_codec='hevc' WHERE id='file1'"
+    ).run();
+    const fetchMock = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+      const value = String(url);
+      if (value.includes('aio.example') && value.includes('/stream/movie/')) {
+        return new Response(JSON.stringify({
+          streams: [{
+            url: 'https://1.1.1.1/movie.mkv?token=server-only',
+            title: 'Cached 2160p BluRay'
+          }]
+        }), { status: 200 });
+      }
+      if (value.startsWith('https://1.1.1.1/')) {
+        expect(new Headers(init?.headers).get('range')).toBe('bytes=0-9');
+        return new Response('0123456789', {
+          status: 206,
+          headers: {
+            'Content-Type': 'video/x-matroska',
+            'Content-Length': '10',
+            'Content-Range': 'bytes 0-9/100',
+            'Accept-Ranges': 'bytes'
+          }
+        });
+      }
+      throw new Error(`Unexpected request host: ${new URL(value).host}`);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const planned = await built.app.inject({
+      method: 'GET',
+      url: `/silo-stream/${encodeURIComponent(token())}`
+    });
+    expect(planned.statusCode).toBe(302);
+    expect(planned.headers.location).toMatch(/^\/fallback-media\//);
+    expect(planned.headers.location).not.toContain('server-only');
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/playback/start')))
+      .toBe(false);
+
+    const streamed = await built.app.inject({
+      method: 'GET',
+      url: planned.headers.location!,
+      headers: { range: 'bytes=0-9' }
+    });
+    expect(streamed.statusCode).toBe(206);
+    expect(streamed.body).toBe('0123456789');
   });
 
   it('does not impose the local test server 1080p ceiling on other Auto users', async () => {

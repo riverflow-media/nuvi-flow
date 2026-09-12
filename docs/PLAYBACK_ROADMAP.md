@@ -91,6 +91,52 @@ the declared SDR target.
 
 ## Current focus and next milestones
 
+### Completed optional fallback-addon foundation
+
+- Disabled-by-default private Stremio-compatible provider settings and an
+  authenticated manifest connection test, with AIOStreams detection
+- Auto-only lookup before a device without explicit codec evidence would likely
+  require full video conversion; H.264/direct and fixed-quality requests keep
+  their existing behavior
+- Five-second bounded lookups, single-flight request coalescing, short result
+  caching, and active fallback-session reuse
+- Up to ten safe candidates retained: the provider's first four choices plus
+  smaller candidates across available resolution tiers, followed by remaining
+  provider-ranked results. A bounded 15-second pre-response failover budget and
+  sticky reuse prevent unbounded retries and unnecessary source changes
+- A one-time startup throughput probe, when candidate or response size and local
+  runtime are known: read at most 512 KiB for at most three seconds and require
+  estimated average bitrate plus 35% headroom. Probe bytes are preserved for
+  the client; candidates without usable size metadata retain availability-only
+  failover
+- Candidate acceptance limited to immediately playable public HTTPS progressive
+  URLs; torrent-only, not-ready, HLS, credential-bearing, local, and private-IP
+  URLs are rejected
+- Candidate URLs and optional upstream request headers remain in a process-local
+  registry. Clients receive only an expiring signed session token, and Range
+  requests are streamed through Nuvi-Flow
+- No mid-playback source replacement is claimed: the Stremio addon protocol does
+  not provide a reliable player-position or stream-swap event
+
+### Completed dynamic Auto routing foundation
+
+- Missing local movies and episodes can return an immediate signed fallback
+  stream while the existing Radarr/Sonarr acquisition remains queued
+- AIOStreams extended metadata is validated and normalized into size, duration,
+  bitrate, resolution, and provider-order fields for deterministic scoring
+- Auto ranks the highest-resolution candidate that fits the current effective
+  budget, while retaining smaller cross-resolution candidates for bounded retry
+- Candidate count (up to 25), startup budget, resolution ceiling, downgrade
+  behavior, safety headroom, observation lifetime, and cold-start policy are
+  configurable from the admin dashboard
+- Successful direct/fallback transfers build short-lived estimates per
+  pseudonymous device and hashed network context. Three clean observations are
+  required; pauses, seeks, short ranges, errors, and abandoned transfers do not
+  become routing evidence
+- Network observations remain separate from durable codec/device capabilities,
+  preventing one slow connection from permanently downgrading a device
+- The additive SQLite table uses the verified pre-migration backup path
+
 1. Runtime fallback using measured manifest/segment response time, repeated slow
    segment counts, status failures, and startup latency. Silo does not currently
    expose encoder FPS/GPU utilization through protocol v3, so fallback must use

@@ -8,7 +8,9 @@ import type { AppConfig } from '../config.js';
 import type { AppDatabase } from '../db/index.js';
 import { parseByteRange } from '../lib/range.js';
 import {
+  createFallbackMediaToken,
   createSiloMediaToken,
+  verifyFallbackMediaToken,
   verifySiloMediaToken,
   verifyStreamToken
 } from '../lib/security.js';
@@ -24,6 +26,8 @@ import {
   rewriteHlsManifest
 } from '../services/playback/hls-proxy.js';
 import type { SiloService } from '../services/silo-service.js';
+import type { FallbackAddonService } from '../services/playback/fallback-addon.js';
+import type { NetworkProfileStore } from '../services/playback/network-profiles.js';
 import type { SettingsService } from '../services/settings.js';
 import type {
   ExternalSubtitleRow,
@@ -61,7 +65,14 @@ function authorize(request: FastifyRequest, database: AppDatabase, config: AppCo
   return file ? { file, token: payload } : null;
 }
 
-async function serveMedia(request: FastifyRequest, reply: FastifyReply, database: AppDatabase, config: AppConfig): Promise<FastifyReply> {
+async function serveMedia(
+  request: FastifyRequest,
+  reply: FastifyReply,
+  database: AppDatabase,
+  config: AppConfig,
+  settings: SettingsService,
+  networkProfiles: NetworkProfileStore
+): Promise<FastifyReply> {
   const authorized = authorize(request, database, config);
   if (!authorized) {
     return reply.code(401).header('Cache-Control', 'no-store').send({ error: 'Invalid or expired stream token' });
@@ -94,10 +105,19 @@ async function serveMedia(request: FastifyRequest, reply: FastifyReply, database
     return reply.send();
   }
   const stream = fs.createReadStream(authorized.file.absolute_path, { start: range.start, end: range.end });
+  const output = authorized.token!.deviceId && settings.fallbackAddonEnabled &&
+    settings.fallbackAddonNetworkAdaptation
+    ? stream.pipe(networkProfiles.meter(
+        authorized.token!.deviceId,
+        request.ip,
+        settings.fallbackAddonNetworkMemoryMinutes
+      ))
+    : stream;
   request.raw.once('aborted', () => {
     if (!stream.destroyed) stream.destroy();
+    if (output !== stream && !output.destroyed) output.destroy();
   });
-  return reply.send(stream);
+  return reply.send(output);
 }
 
 async function serveSiloStream(
@@ -106,7 +126,8 @@ async function serveSiloStream(
   database: AppDatabase,
   settings: SettingsService,
   config: AppConfig,
-  playback: PlaybackService
+  playback: PlaybackService,
+  networkProfiles: NetworkProfileStore
 ): Promise<FastifyReply> {
   const authorized = authorize(
     request,
@@ -211,7 +232,7 @@ async function serveSiloStream(
   let sessionResult;
 
   try {
-    const result = await playback.orchestrate({
+    const orchestrationInput = {
       item,
       file: authorized.file,
       deviceId,
@@ -219,8 +240,28 @@ async function serveSiloStream(
       profileId: settings.siloProfileId,
       configuredQuality: settings.siloTranscodeQuality,
       authorizationExpiresAt: authorized.token!.exp,
-      episode
-    });
+      episode,
+      networkEstimateMbps: settings.fallbackAddonEnabled &&
+        settings.fallbackAddonNetworkAdaptation
+        ? networkProfiles.usableEstimateMbps(deviceId, request.ip)
+        : null,
+      networkContextId: networkProfiles.context(deviceId, request.ip).id
+    };
+    const fallback = await playback.tryFallback(orchestrationInput);
+    if (fallback) {
+      const { token } = createFallbackMediaToken(
+        fallback.id,
+        authorized.token!.exp,
+        config.streamSecret
+      );
+      return reply
+        .code(302)
+        .header('Location', '/fallback-media/' + encodeURIComponent(token))
+        .header('X-Nuvi-Flow-Playback-Id', fallback.playbackId)
+        .header('Cache-Control', 'no-store')
+        .send();
+    }
+    const result = await playback.orchestrate(orchestrationInput);
     sessionResult = result.sessionResult;
   } catch (error) {
     if (error instanceof PlaybackOrchestrationError) {
@@ -253,6 +294,89 @@ async function serveSiloStream(
     )
     .header('Cache-Control', 'no-store')
     .send();
+}
+
+async function serveFallbackMedia(
+  request: FastifyRequest,
+  reply: FastifyReply,
+  config: AppConfig,
+  fallbackAddon: FallbackAddonService,
+  settings: SettingsService,
+  networkProfiles: NetworkProfileStore
+): Promise<FastifyReply> {
+  const { token } = request.params as { token: string };
+  const payload = verifyFallbackMediaToken(token, config.streamSecret);
+  if (!payload) {
+    return reply.code(401).header('Cache-Control', 'no-store')
+      .send({ error: 'Invalid or expired fallback media token' });
+  }
+  const session = fallbackAddon.getSession(payload.sessionId);
+  if (!session) {
+    return reply.code(410).header('Cache-Control', 'no-store')
+      .send({ error: 'Fallback playback session has expired.' });
+  }
+  const upstreamHeaders = new Headers();
+  for (const name of ['accept', 'range', 'if-none-match', 'if-modified-since']) {
+    const value = headerValue(request, name);
+    if (value) upstreamHeaders.set(name, value);
+  }
+  let response: Response;
+  try {
+    response = await fallbackAddon.fetchMedia(session, {
+      method: request.method,
+      headers: upstreamHeaders
+    });
+  } catch {
+    return reply.code(502).header('Cache-Control', 'no-store')
+      .send({ error: 'Fallback media could not be fetched.' });
+  }
+  const contentType = response.headers.get('content-type') || 'application/octet-stream';
+  if (!response.ok && ![304, 416].includes(response.status)) {
+    await response.body?.cancel();
+    return reply.code(response.status === 404 ? 404 : 502)
+      .header('Cache-Control', 'no-store')
+      .send({ error: 'Fallback media could not be fetched.' });
+  }
+  if (/mpegurl/i.test(contentType)) {
+    await response.body?.cancel();
+    return reply.code(502).header('Cache-Control', 'no-store')
+      .send({ error: 'HLS fallback streams are not supported yet.' });
+  }
+  for (const name of [
+    'accept-ranges', 'content-range', 'content-disposition', 'content-length',
+    'etag', 'last-modified'
+  ]) {
+    const value = response.headers.get(name);
+    if (value) reply.header(name, value);
+  }
+  reply.code(response.status)
+    .header('Content-Type', contentType)
+    .header('Cache-Control', 'private, no-store')
+    .header('X-Content-Type-Options', 'nosniff');
+  if ([304, 416].includes(response.status)) {
+    await response.body?.cancel();
+    return reply.send();
+  }
+  if (request.method === 'HEAD' || !response.body) {
+    await response.body?.cancel();
+    return reply.send();
+  }
+  const upstreamStream = Readable.fromWeb(
+    response.body as unknown as NodeReadableStream
+  );
+  const stream = session.deviceId && settings.fallbackAddonEnabled &&
+    settings.fallbackAddonNetworkAdaptation
+    ? upstreamStream.pipe(networkProfiles.meter(
+        session.deviceId,
+        request.ip,
+        settings.fallbackAddonNetworkMemoryMinutes
+      ))
+    : upstreamStream;
+  request.raw.once('aborted', () => {
+    if (!upstreamStream.destroyed) upstreamStream.destroy();
+    if (!stream.destroyed) stream.destroy();
+  });
+  return reply.send(stream);
 }
 
 async function serveSiloMedia(
@@ -452,11 +576,15 @@ export function registerMediaRoutes(
   config: AppConfig,
   settings: SettingsService,
   playback: PlaybackService,
-  silo: SiloService
+  silo: SiloService,
+  fallbackAddon: FallbackAddonService,
+  networkProfiles: NetworkProfileStore
 ): void {
   const options = { config: { rateLimit: { max: 1200, timeWindow: '1 minute' } } };
-  app.get('/media/:token', options, (request, reply) => serveMedia(request, reply, database, config));
-  app.head('/media/:token', options, (request, reply) => serveMedia(request, reply, database, config));
+  app.get('/media/:token', options, (request, reply) =>
+    serveMedia(request, reply, database, config, settings, networkProfiles));
+  app.head('/media/:token', options, (request, reply) =>
+    serveMedia(request, reply, database, config, settings, networkProfiles));
 
   app.get(
     '/silo-stream/:token',
@@ -468,7 +596,8 @@ export function registerMediaRoutes(
         database,
         settings,
         config,
-        playback
+        playback,
+        networkProfiles
       )
   );
 
@@ -498,6 +627,10 @@ export function registerMediaRoutes(
         playback
       )
   );
+  app.get('/fallback-media/:token', options, (request, reply) =>
+    serveFallbackMedia(request, reply, config, fallbackAddon, settings, networkProfiles));
+  app.head('/fallback-media/:token', options, (request, reply) =>
+    serveFallbackMedia(request, reply, config, fallbackAddon, settings, networkProfiles));
   app.get('/subtitles/:token/:subtitleId', { config: { rateLimit: { max: 600, timeWindow: '1 minute' } } }, async (request, reply) => {
     const authorized = authorize(request, database, config);
     if (!authorized) return reply.code(401).send({ error: 'Invalid or expired stream token' });

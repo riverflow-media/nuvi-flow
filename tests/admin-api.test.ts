@@ -143,6 +143,42 @@ describe('admin media detail API', () => {
     expect(shown.json().settings.showDirectPlay).toBe(true);
   });
 
+  it('validates and stores a private fallback addon manifest without returning it', async () => {
+    const testConnection = vi.spyOn(built.fallbackAddon, 'testConnection')
+      .mockResolvedValue({
+        id: 'aiostreams.private', name: 'AIOStreams', version: '2.9.0',
+        provider: 'aiostreams'
+      });
+    const manifestUrl = 'https://aio.example/private-secret/manifest.json';
+    const tested = await request('POST', '/admin/api/integrations/fallback-addon/test', {
+      manifestUrl
+    });
+    expect(tested.statusCode).toBe(200);
+    expect(testConnection).toHaveBeenCalledWith(manifestUrl);
+    expect(tested.json()).toMatchObject({ provider: 'aiostreams', name: 'AIOStreams' });
+
+    const currentSettings = Object.fromEntries(
+      Object.entries(built.settings.publicView()).map(([key, value]) => [key, String(value)])
+    );
+    const saved = await request('PUT', '/admin/api/settings', {
+      ...currentSettings,
+      fallbackAddonEnabled: 'true',
+      fallbackAddonManifestUrl: manifestUrl,
+      fallbackAddonTimeoutMs: '5000'
+    });
+    expect(saved.statusCode).toBe(200);
+    expect(saved.body).not.toContain('private-secret');
+    expect(saved.json().settings).toMatchObject({
+      fallbackAddonEnabled: true,
+      fallbackAddonConfigured: true,
+      fallbackAddonTimeoutMs: 5000,
+      fallbackAddonUseForMissing: true,
+      fallbackAddonMaxAttempts: 10,
+      fallbackAddonNetworkMemoryMinutes: 45
+    });
+    expect(built.settings.fallbackAddonManifestUrl).toBe(manifestUrl);
+  });
+
   it('returns coherent current-match details and updates action state', async () => {
     const details = await request('GET', '/admin/api/files/file1');
     expect(details.statusCode).toBe(200);

@@ -22,7 +22,8 @@ describe('conservative Silo playback policy', () => {
         videoCodec: 'h264',
         audioCodec: 'aac',
         maxAudioChannels: 2,
-        dynamicRange: 'sdr'
+        dynamicRange: 'sdr',
+        likelyVideoTranscode: false
       },
       requestProfile: {
         qualityPreference: 'auto',
@@ -203,5 +204,16 @@ describe('conservative Silo playback policy', () => {
 
     expect(plan.requestProfile.qualityPreference).toBe('auto');
     expect(plan.target.maxResolution).toBe('2160p');
+  });
+
+  it('flags an unknown HEVC source for optional pre-transcode fallback only in Auto', () => {
+    expect(planSiloPlayback({
+      width: 3840, height: 2160, relative_path: 'Movie.mkv',
+      video_codec: 'hevc'
+    }, 'auto', deviceId).target.likelyVideoTranscode).toBe(true);
+    expect(planSiloPlayback({
+      width: 3840, height: 2160, relative_path: 'Movie.mkv',
+      video_codec: 'hevc'
+    }, '1080p-medium', deviceId).target.likelyVideoTranscode).toBe(false);
   });
 });

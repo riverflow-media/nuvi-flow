@@ -108,6 +108,18 @@ export interface DeviceCapabilityRow {
   updated_at: number;
 }
 
+export interface PlaybackNetworkProfileRow {
+  device_id: string;
+  network_context_id: string;
+  context_reliable: number;
+  estimated_mbps: number;
+  sample_count: number;
+  confidence: number;
+  first_observed_at: number;
+  last_observed_at: number;
+  expires_at: number;
+}
+
 export interface ExternalSubtitleRow {
   id: string;
   media_file_id: string;

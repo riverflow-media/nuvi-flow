@@ -215,6 +215,61 @@ export function verifySiloMediaToken(
   }
 }
 
+export interface FallbackMediaTokenPayload {
+  v: 1;
+  sessionId: string;
+  exp: number;
+}
+
+const fallbackSessionIdPattern = /^[a-f0-9-]{36}$/;
+
+export function createFallbackMediaToken(
+  sessionId: string,
+  expiresAt: number,
+  secret: string
+): { token: string; payload: FallbackMediaTokenPayload } {
+  if (!fallbackSessionIdPattern.test(sessionId)) {
+    throw new Error('Invalid fallback playback session.');
+  }
+  const payload: FallbackMediaTokenPayload = {
+    v: 1,
+    sessionId,
+    exp: expiresAt
+  };
+  const encoded = Buffer.from(JSON.stringify(payload)).toString('base64url');
+  return {
+    token: `${encoded}.${signature(encoded, secret)}`,
+    payload
+  };
+}
+
+export function verifyFallbackMediaToken(
+  token: string,
+  secret: string,
+  now = Date.now()
+): FallbackMediaTokenPayload | null {
+  const [encoded, suppliedSignature, extra] = token.split('.');
+  if (
+    !encoded || !suppliedSignature || extra ||
+    !safeEqual(signature(encoded, secret), suppliedSignature)
+  ) return null;
+  try {
+    const payload = JSON.parse(
+      Buffer.from(encoded, 'base64url').toString('utf8')
+    ) as Partial<FallbackMediaTokenPayload>;
+    if (
+      payload.v !== 1 ||
+      typeof payload.sessionId !== 'string' ||
+      !fallbackSessionIdPattern.test(payload.sessionId) ||
+      typeof payload.exp !== 'number' ||
+      payload.exp <= now
+    ) return null;
+    return payload as FallbackMediaTokenPayload;
+  } catch {
+    return null;
+  }
+}
+
 export interface AdminSession {
   username: string;
   csrf: string;

@@ -84,6 +84,7 @@ export interface PlaybackPolicyPlan {
     audioCodec: 'aac';
     maxAudioChannels: 2;
     dynamicRange: 'sdr' | 'hdr';
+    likelyVideoTranscode: boolean;
   };
 }
 
@@ -211,6 +212,11 @@ export function planSiloPlayback(
   const scannedVideoCodec = auto ? sourceVideoCodec(file.video_codec) : null;
   const scannedAudioCodec = auto ? sourceAudioCodec(file.audio_codec) : null;
   const scannedContainer = auto ? sourceContainer(file) : null;
+  const likelyVideoTranscode = Boolean(
+    auto &&
+    scannedVideoCodec &&
+    !supportedVideoCodecs.has(scannedVideoCodec)
+  );
 
   if (scannedVideoCodec) directVideoCodecs.add(scannedVideoCodec);
   if (scannedAudioCodec) directAudioCodecs.add(scannedAudioCodec);
@@ -310,7 +316,8 @@ export function planSiloPlayback(
       videoCodec: 'h264',
       audioCodec: 'aac',
       maxAudioChannels: 2,
-      dynamicRange: hdr ? 'hdr' : 'sdr'
+      dynamicRange: hdr ? 'hdr' : 'sdr',
+      likelyVideoTranscode
     }
   };
 }

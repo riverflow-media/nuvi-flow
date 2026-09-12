@@ -126,6 +126,10 @@ describe('media details modal', () => {
     expect(qualityOptions.match(/recommended/g)).toHaveLength(1);
     expect(html).toContain('lets Silo choose original playback');
     expect(html).toContain('Separate Direct Play option');
+    expect(html).toContain('Missing local media');
+    expect(html).toContain('Maximum candidates');
+    expect(html).toContain('Network adaptation');
+    expect(html).toContain('Network memory');
   });
 
   it('regenerates the secure manifest URL with an explicit warning', async () => {

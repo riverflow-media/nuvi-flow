@@ -149,6 +149,69 @@ export class SettingsService {
     return this.boolean('showDirectPlay', this.defaults.showDirectPlay);
   }
 
+  get fallbackAddonEnabled(): boolean {
+    return this.boolean(
+      'fallbackAddonEnabled',
+      this.defaults.fallbackAddonEnabled
+    );
+  }
+
+  get fallbackAddonManifestUrl(): string {
+    return this.get(
+      'fallbackAddonManifestUrl',
+      this.defaults.fallbackAddonManifestUrl
+    );
+  }
+
+  get fallbackAddonTimeoutMs(): number {
+    return Math.min(15_000, this.number(
+      'fallbackAddonTimeoutMs',
+      this.defaults.fallbackAddonTimeoutMs,
+      1000
+    ));
+  }
+
+  get fallbackAddonUseForMissing(): boolean {
+    return this.boolean('fallbackAddonUseForMissing', this.defaults.fallbackAddonUseForMissing);
+  }
+
+  get fallbackAddonBeforeTranscode(): boolean {
+    return this.boolean('fallbackAddonBeforeTranscode', this.defaults.fallbackAddonBeforeTranscode);
+  }
+
+  get fallbackAddonMaxAttempts(): number {
+    return Math.min(25, Math.floor(this.number('fallbackAddonMaxAttempts', this.defaults.fallbackAddonMaxAttempts, 1)));
+  }
+
+  get fallbackAddonStartupBudgetMs(): number {
+    return Math.min(30_000, Math.floor(this.number('fallbackAddonStartupBudgetMs', this.defaults.fallbackAddonStartupBudgetMs, 5000)));
+  }
+
+  get fallbackAddonMaxResolution(): string {
+    const value = this.get('fallbackAddonMaxResolution', this.defaults.fallbackAddonMaxResolution);
+    return ['auto', '2160p', '1080p', '720p', '480p'].includes(value) ? value : 'auto';
+  }
+
+  get fallbackAddonAllowResolutionDowngrade(): boolean {
+    return this.boolean('fallbackAddonAllowResolutionDowngrade', this.defaults.fallbackAddonAllowResolutionDowngrade);
+  }
+
+  get fallbackAddonNetworkAdaptation(): boolean {
+    return this.boolean('fallbackAddonNetworkAdaptation', this.defaults.fallbackAddonNetworkAdaptation);
+  }
+
+  get fallbackAddonNetworkHeadroomPercent(): number {
+    return Math.min(100, this.number('fallbackAddonNetworkHeadroomPercent', this.defaults.fallbackAddonNetworkHeadroomPercent, 0));
+  }
+
+  get fallbackAddonNetworkMemoryMinutes(): number {
+    return Math.min(120, this.number('fallbackAddonNetworkMemoryMinutes', this.defaults.fallbackAddonNetworkMemoryMinutes, 10));
+  }
+
+  get fallbackAddonColdStartMbps(): number {
+    return Math.min(10_000, this.number('fallbackAddonColdStartMbps', this.defaults.fallbackAddonColdStartMbps, 0));
+  }
+
   private number(key: string, fallback: number, minimum: number): number {
     const parsed = Number(this.database.getSetting(key));
     return Number.isFinite(parsed) && parsed >= minimum ? parsed : fallback;
@@ -206,7 +269,20 @@ export class SettingsService {
       siloConfigured: Boolean(this.siloApiKey),
       siloProfileId: this.siloProfileId,
       siloTranscodeQuality: this.siloTranscodeQuality,
-      showDirectPlay: this.showDirectPlay
+      showDirectPlay: this.showDirectPlay,
+      fallbackAddonEnabled: this.fallbackAddonEnabled,
+      fallbackAddonConfigured: Boolean(this.fallbackAddonManifestUrl),
+      fallbackAddonTimeoutMs: this.fallbackAddonTimeoutMs,
+      fallbackAddonUseForMissing: this.fallbackAddonUseForMissing,
+      fallbackAddonBeforeTranscode: this.fallbackAddonBeforeTranscode,
+      fallbackAddonMaxAttempts: this.fallbackAddonMaxAttempts,
+      fallbackAddonStartupBudgetMs: this.fallbackAddonStartupBudgetMs,
+      fallbackAddonMaxResolution: this.fallbackAddonMaxResolution,
+      fallbackAddonAllowResolutionDowngrade: this.fallbackAddonAllowResolutionDowngrade,
+      fallbackAddonNetworkAdaptation: this.fallbackAddonNetworkAdaptation,
+      fallbackAddonNetworkHeadroomPercent: this.fallbackAddonNetworkHeadroomPercent,
+      fallbackAddonNetworkMemoryMinutes: this.fallbackAddonNetworkMemoryMinutes,
+      fallbackAddonColdStartMbps: this.fallbackAddonColdStartMbps
     };
   }
 }

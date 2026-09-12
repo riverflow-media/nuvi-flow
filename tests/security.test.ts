@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
+  createFallbackMediaToken,
   createSiloMediaToken,
   createStreamToken,
+  verifyFallbackMediaToken,
   verifySiloMediaToken,
   verifyStreamToken
 } from '../src/lib/security.js';
@@ -142,6 +144,16 @@ describe('HMAC stream tokens', () => {
   it('rejects expired tokens', () => {
     const { token } = createStreamToken('file_1', 10_000, secret, 'token-1');
     expect(verifyStreamToken(token, secret, 10_000)).toBeNull();
+  });
+
+  it('signs only an opaque fallback session ID', () => {
+    const sessionId = '11111111-1111-4111-8111-111111111111';
+    const { token, payload } = createFallbackMediaToken(sessionId, 10_000, secret);
+    expect(payload).toEqual({ v: 1, sessionId, exp: 10_000 });
+    expect(verifyFallbackMediaToken(token, secret, 9_000)).toEqual(payload);
+    expect(token).not.toContain('https');
+    expect(() => createFallbackMediaToken('https://cdn.example/file', 10_000, secret))
+      .toThrow('Invalid fallback playback session');
   });
 });
 

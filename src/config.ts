@@ -41,6 +41,19 @@ export interface AppConfig {
   siloProfileId: string;
   siloTranscodeQuality: string;
   showDirectPlay: boolean;
+  fallbackAddonEnabled: boolean;
+  fallbackAddonManifestUrl: string;
+  fallbackAddonTimeoutMs: number;
+  fallbackAddonUseForMissing: boolean;
+  fallbackAddonBeforeTranscode: boolean;
+  fallbackAddonMaxAttempts: number;
+  fallbackAddonStartupBudgetMs: number;
+  fallbackAddonMaxResolution: string;
+  fallbackAddonAllowResolutionDowngrade: boolean;
+  fallbackAddonNetworkAdaptation: boolean;
+  fallbackAddonNetworkHeadroomPercent: number;
+  fallbackAddonNetworkMemoryMinutes: number;
+  fallbackAddonColdStartMbps: number;
 }
 
 function numberValue(value: string | undefined, fallback: number, minimum = 0): number {
@@ -102,7 +115,24 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     siloProfileId: env.SILO_PROFILE_ID?.trim() || '',
     siloTranscodeQuality:
       env.SILO_TRANSCODE_QUALITY?.trim() || 'auto',
-    showDirectPlay: booleanValue(env.SHOW_DIRECT_PLAY, true)
+    showDirectPlay: booleanValue(env.SHOW_DIRECT_PLAY, true),
+    fallbackAddonEnabled: booleanValue(env.FALLBACK_ADDON_ENABLED, false),
+    fallbackAddonManifestUrl: env.FALLBACK_ADDON_MANIFEST_URL?.trim() || '',
+    fallbackAddonTimeoutMs: Math.floor(numberValue(
+      env.FALLBACK_ADDON_TIMEOUT_MS,
+      5000,
+      1000
+    )),
+    fallbackAddonUseForMissing: booleanValue(env.FALLBACK_ADDON_USE_FOR_MISSING, true),
+    fallbackAddonBeforeTranscode: booleanValue(env.FALLBACK_ADDON_BEFORE_TRANSCODE, true),
+    fallbackAddonMaxAttempts: Math.floor(numberValue(env.FALLBACK_ADDON_MAX_ATTEMPTS, 10, 1)),
+    fallbackAddonStartupBudgetMs: Math.floor(numberValue(env.FALLBACK_ADDON_STARTUP_BUDGET_MS, 15_000, 5000)),
+    fallbackAddonMaxResolution: env.FALLBACK_ADDON_MAX_RESOLUTION?.trim() || 'auto',
+    fallbackAddonAllowResolutionDowngrade: booleanValue(env.FALLBACK_ADDON_ALLOW_RESOLUTION_DOWNGRADE, true),
+    fallbackAddonNetworkAdaptation: booleanValue(env.FALLBACK_ADDON_NETWORK_ADAPTATION, true),
+    fallbackAddonNetworkHeadroomPercent: numberValue(env.FALLBACK_ADDON_NETWORK_HEADROOM_PERCENT, 35, 0),
+    fallbackAddonNetworkMemoryMinutes: numberValue(env.FALLBACK_ADDON_NETWORK_MEMORY_MINUTES, 45, 1),
+    fallbackAddonColdStartMbps: numberValue(env.FALLBACK_ADDON_COLD_START_MBPS, 0, 0)
   };
 }
 

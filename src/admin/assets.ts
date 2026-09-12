@@ -310,6 +310,93 @@ export function adminHtml(csrf: string): string {
 </div>
 
 <div class="settings-section">
+  <h3>Fallback addon · Optional</h3>
+  <p>Auto can use a private Stremio-compatible addon such as AIOStreams when local media is missing or before an expensive video transcode. Nuvi-Flow validates every candidate, keeps private URLs server-side, and ranks sustainable quality using short-lived observations for the current device and network.</p>
+</div>
+
+<div class="field">
+  <label for="fallbackAddonEnabled">Custom fallback addon</label>
+  <select id="fallbackAddonEnabled" class="select" name="fallbackAddonEnabled">
+    <option value="false">Disabled</option>
+    <option value="true">Enabled</option>
+  </select>
+  <p class="help">Applies only to Auto. Fixed Silo quality selections never use this fallback.</p>
+</div>
+
+<div class="field">
+  <label for="fallbackAddonUseForMissing">Missing local media</label>
+  <select id="fallbackAddonUseForMissing" class="select" name="fallbackAddonUseForMissing"><option value="true">Play fallback and keep requesting</option><option value="false">Request local copy only</option></select>
+  <p class="help">Radarr or Sonarr is still queued so a local source can be used next time.</p>
+</div>
+
+<div class="field">
+  <label for="fallbackAddonBeforeTranscode">Before video transcode</label>
+  <select id="fallbackAddonBeforeTranscode" class="select" name="fallbackAddonBeforeTranscode"><option value="true">Try fallback first</option><option value="false">Use Silo directly</option></select>
+</div>
+
+<div class="field">
+  <label for="fallbackAddonMaxAttempts">Maximum candidates</label>
+  <input id="fallbackAddonMaxAttempts" class="input" name="fallbackAddonMaxAttempts" type="number" min="1" max="25" step="1">
+  <p class="help">All results are inspected, but at most this many safe candidates are contacted. Recommended: 10.</p>
+</div>
+
+<div class="field">
+  <label for="fallbackAddonStartupBudgetMs">Total startup budget</label>
+  <input id="fallbackAddonStartupBudgetMs" class="input" name="fallbackAddonStartupBudgetMs" type="number" min="5000" max="30000" step="1000">
+  <p class="help">Combined candidate startup time before Auto continues to Silo. Recommended: 15000 ms.</p>
+</div>
+
+<div class="field">
+  <label for="fallbackAddonMaxResolution">Resolution ceiling</label>
+  <select id="fallbackAddonMaxResolution" class="select" name="fallbackAddonMaxResolution"><option value="auto">Auto · highest sustainable</option><option value="2160p">Up to 2160p</option><option value="1080p">Up to 1080p</option><option value="720p">Up to 720p</option><option value="480p">Up to 480p</option></select>
+</div>
+
+<div class="field">
+  <label for="fallbackAddonAllowResolutionDowngrade">Quality fallback</label>
+  <select id="fallbackAddonAllowResolutionDowngrade" class="select" name="fallbackAddonAllowResolutionDowngrade"><option value="true">Allow lower resolution when needed</option><option value="false">Keep best available resolution</option></select>
+</div>
+
+<div class="field">
+  <label for="fallbackAddonNetworkAdaptation">Network adaptation</label>
+  <select id="fallbackAddonNetworkAdaptation" class="select" name="fallbackAddonNetworkAdaptation"><option value="true">Automatic · recommended</option><option value="false">Disabled</option></select>
+  <p class="help">Requires three successful samples for this device and network. Pauses, seeks, errors, and abandoned transfers are ignored.</p>
+</div>
+
+<div class="field">
+  <label for="fallbackAddonNetworkHeadroomPercent">Network safety margin</label>
+  <input id="fallbackAddonNetworkHeadroomPercent" class="input" name="fallbackAddonNetworkHeadroomPercent" type="number" min="0" max="100" step="5">
+  <p class="help">Extra capacity required above average media bitrate. Recommended: 35%.</p>
+</div>
+
+<div class="field">
+  <label for="fallbackAddonNetworkMemoryMinutes">Network memory</label>
+  <input id="fallbackAddonNetworkMemoryMinutes" class="input" name="fallbackAddonNetworkMemoryMinutes" type="number" min="10" max="120" step="5">
+  <p class="help">Short expiry keeps devices and changing connections independent. Recommended: 45 minutes.</p>
+</div>
+
+<div class="field">
+  <label for="fallbackAddonColdStartMbps">Cold-start limit (optional)</label>
+  <input id="fallbackAddonColdStartMbps" class="input" name="fallbackAddonColdStartMbps" type="number" min="0" max="10000" step="1">
+  <p class="help">0 leaves unknown connections unrestricted. Otherwise enter a conservative Mbps ceiling for the first selection.</p>
+</div>
+
+<div class="field">
+  <label for="fallbackAddonTimeoutMs">Lookup timeout</label>
+  <input id="fallbackAddonTimeoutMs" class="input" name="fallbackAddonTimeoutMs" type="number" min="1000" max="15000" step="500">
+  <p class="help">5,000 ms is recommended. If the addon is slow or unavailable, playback continues through Silo.</p>
+</div>
+
+<div class="field full">
+  <label for="fallbackAddonManifestUrl">Private addon manifest URL</label>
+  <input id="fallbackAddonManifestUrl" class="input" name="fallbackAddonManifestUrl" type="password" autocomplete="new-password" placeholder="https://aio.example/addon/private-token/manifest.json">
+  <div class="integration-actions">
+    <button class="btn small" type="button" data-test-integration="fallbackAddon">Test Connection</button>
+  </div>
+  <p class="integration-status" id="fallbackAddonStatus">Not configured.</p>
+  <p class="help">Paste the installed addon's private manifest URL, not its configuration page. Leaving this blank preserves the saved URL.</p>
+</div>
+
+<div class="settings-section">
   <h3>Administration</h3>
 </div>
 
@@ -349,9 +436,9 @@ function setSelectValue(select,value,label){if(!select)return;const stringValue=
 function populateIntegrationSelect(select,items,currentValue,{emptyValue='',emptyLabel='Not selected',valueKey='id',labelKey='name'}={}){if(!select)return;const wanted=String(currentValue??select.value??emptyValue);select.innerHTML='';const empty=document.createElement('option');empty.value=emptyValue;empty.textContent=emptyLabel;select.appendChild(empty);for(const item of items||[]){const option=document.createElement('option');option.value=String(item[valueKey]);option.textContent=String(item[labelKey]??item[valueKey]);if(item.accessible===false)option.textContent+=' (unavailable)';select.appendChild(option)}if(wanted&&Array.from(select.options).some(option=>option.value===wanted)){select.value=wanted}else if(wanted&&wanted!==emptyValue){const option=document.createElement('option');option.value=wanted;option.textContent=wanted+' (saved, not returned by server)';select.appendChild(option);select.value=wanted}else select.value=emptyValue}
 function applyIntegrationData(service,data){const form=document.getElementById('settingsForm');if(!form)return;if(service==='radarr'){populateIntegrationSelect(form.elements.radarrRootFolderPath,data.rootFolders,form.elements.radarrRootFolderPath.value,{valueKey:'path',labelKey:'path'});populateIntegrationSelect(form.elements.radarrQualityProfileId,data.qualityProfiles,form.elements.radarrQualityProfileId.value,{emptyValue:'0',valueKey:'id',labelKey:'name'})}else if(service==='sonarr'){populateIntegrationSelect(form.elements.sonarrRootFolderPath,data.rootFolders,form.elements.sonarrRootFolderPath.value,{valueKey:'path',labelKey:'path'});populateIntegrationSelect(form.elements.sonarrAnimeRootFolderPath,data.rootFolders,form.elements.sonarrAnimeRootFolderPath.value,{valueKey:'path',labelKey:'path'});populateIntegrationSelect(form.elements.sonarrQualityProfileId,data.qualityProfiles,form.elements.sonarrQualityProfileId.value,{emptyValue:'0',valueKey:'id',labelKey:'name'});populateIntegrationSelect(form.elements.sonarrAnimeQualityProfileId,data.qualityProfiles,form.elements.sonarrAnimeQualityProfileId.value,{emptyValue:'0',emptyLabel:'Use normal TV quality profile',valueKey:'id',labelKey:'name'})}else if(service==='silo'){const primary=(data.profiles||[]).find(profile=>profile.primary);const current=form.elements.siloProfileId.value||primary?.id||'';populateIntegrationSelect(form.elements.siloProfileId,data.profiles,current,{emptyValue:'',emptyLabel:'Not selected',valueKey:'id',labelKey:'name'})}}
 async function loadSavedIntegrationOptions(service){const form=document.getElementById('settingsForm');if(!form)return;const configured=service==='radarr'?state.settings.radarrConfigured:service==='sonarr'?state.settings.sonarrConfigured:state.settings.siloConfigured;if(!configured)return;const url=form.elements[service+'Url']?.value?.trim()||'';try{const data=await api('/admin/api/integrations/'+service+'/test',{method:'POST',body:JSON.stringify({url})});applyIntegrationData(service,data)}catch(err){const status=document.getElementById(service+'Status');if(status){status.textContent='API key saved. Could not load profile names: '+(err.message||'connection failed');status.className='integration-status warn'}}}
-async function testIntegration(service,button){const form=document.getElementById('settingsForm'),name=service==='radarr'?'Radarr':service==='sonarr'?'Sonarr':'Silo',status=document.getElementById(service+'Status'),url=form.elements[service+'Url']?.value?.trim()||'',apiKey=form.elements[service+'ApiKey']?.value?.trim()||'',original=button.textContent;button.disabled=true;button.textContent='Testing…';status.textContent='Testing connection…';status.className='integration-status';try{const data=await api('/admin/api/integrations/'+service+'/test',{method:'POST',body:JSON.stringify({url,apiKey})});applyIntegrationData(service,data);if(service==='silo'){const profiles=(data.profiles||[]).length;status.textContent='Connected to '+(data.instanceName||name)+(data.status?' · '+data.status:'')+'. '+profiles+' profile'+(profiles===1?'':'s')+' found.'}else{const roots=(data.rootFolders||[]).length,profiles=(data.qualityProfiles||[]).length;status.textContent='Connected to '+(data.instanceName||name)+(data.version?' · v'+data.version:'')+'. '+roots+' root folder'+(roots===1?'':'s')+' and '+profiles+' quality profile'+(profiles===1?'':'s')+' found.'}status.className='integration-status good'}catch(err){status.textContent=err.message||name+' connection failed.';status.className='integration-status danger'}finally{button.disabled=false;button.textContent=original}}
+async function testIntegration(service,button){const form=document.getElementById('settingsForm'),fallback=service==='fallbackAddon',name=service==='radarr'?'Radarr':service==='sonarr'?'Sonarr':fallback?'Fallback addon':'Silo',status=document.getElementById(service+'Status'),url=form.elements[service+'Url']?.value?.trim()||'',apiKey=form.elements[service+'ApiKey']?.value?.trim()||'',manifestUrl=fallback?form.elements.fallbackAddonManifestUrl?.value?.trim()||'':'',endpoint=fallback?'fallback-addon':service,original=button.textContent;button.disabled=true;button.textContent='Testing…';status.textContent='Testing connection…';status.className='integration-status';try{const data=await api('/admin/api/integrations/'+endpoint+'/test',{method:'POST',body:JSON.stringify(fallback?{manifestUrl}:{url,apiKey})});applyIntegrationData(service,data);if(fallback){status.textContent='Connected to '+(data.name||name)+' · '+(data.provider==='aiostreams'?'AIOStreams':'Stremio-compatible')+' · v'+(data.version||'unknown')+'.'}else if(service==='silo'){const profiles=(data.profiles||[]).length;status.textContent='Connected to '+(data.instanceName||name)+(data.status?' · '+data.status:'')+'. '+profiles+' profile'+(profiles===1?'':'s')+' found.'}else{const roots=(data.rootFolders||[]).length,profiles=(data.qualityProfiles||[]).length;status.textContent='Connected to '+(data.instanceName||name)+(data.version?' · v'+data.version:'')+'. '+roots+' root folder'+(roots===1?'':'s')+' and '+profiles+' quality profile'+(profiles===1?'':'s')+' found.'}status.className='integration-status good'}catch(err){status.textContent=err.message||name+' connection failed.';status.className='integration-status danger'}finally{button.disabled=false;button.textContent=original}}
 function syncAnimeRootState(){const form=document.getElementById('settingsForm');if(!form)return;const enabled=form.elements.sonarrSeparateAnimeRoot?.value==='true';if(form.elements.sonarrAnimeRootFolderPath)form.elements.sonarrAnimeRootFolderPath.disabled=!enabled}
-function fillSettings(force=false){if(settingsDirty&&!force)return;const form=document.getElementById('settingsForm'),s=state.settings;for(const name of ['addonName','baseUrl','moviesPath','tvPath','animePath','scanIntervalMinutes','minimumFileSizeMb','streamTokenExpiryHours','longLivedStreamTokens','adminUsername','autoRequestEnabled','radarrEnabled','radarrUrl','sonarrEnabled','sonarrUrl','sonarrSeparateAnimeRoot','sonarrMonitorWholeSeries','siloEnabled','siloUrl','siloTranscodeQuality','showDirectPlay'])if(form.elements[name])form.elements[name].value=String(s[name]??'');setSelectValue(form.elements.radarrRootFolderPath,s.radarrRootFolderPath,s.radarrRootFolderPath);setSelectValue(form.elements.radarrQualityProfileId,s.radarrQualityProfileId,s.radarrQualityProfileId?'Profile #'+s.radarrQualityProfileId:'Not selected');setSelectValue(form.elements.sonarrRootFolderPath,s.sonarrRootFolderPath,s.sonarrRootFolderPath);setSelectValue(form.elements.sonarrAnimeRootFolderPath,s.sonarrAnimeRootFolderPath,s.sonarrAnimeRootFolderPath);setSelectValue(form.elements.sonarrQualityProfileId,s.sonarrQualityProfileId,s.sonarrQualityProfileId?'Profile #'+s.sonarrQualityProfileId:'Not selected');setSelectValue(form.elements.sonarrAnimeQualityProfileId,s.sonarrAnimeQualityProfileId,s.sonarrAnimeQualityProfileId?'Profile #'+s.sonarrAnimeQualityProfileId:'Use normal TV quality profile');setSelectValue(form.elements.siloProfileId,s.siloProfileId,s.siloProfileId?'Profile '+s.siloProfileId:'Not selected');document.getElementById('tmdbStatus').textContent=s.metadataProvider||'Automatic metadata is active.';const radarrStatus=document.getElementById('radarrStatus');radarrStatus.textContent=s.radarrConfigured?'API key saved.':'No API key saved.';radarrStatus.className='integration-status '+(s.radarrConfigured?'good':'warn');const sonarrStatus=document.getElementById('sonarrStatus');sonarrStatus.textContent=s.sonarrConfigured?'API key saved.':'No API key saved.';sonarrStatus.className='integration-status '+(s.sonarrConfigured?'good':'warn');const siloStatus=document.getElementById('siloStatus');siloStatus.textContent=s.siloConfigured?'API key saved.':'No API key saved.';siloStatus.className='integration-status '+(s.siloConfigured?'good':'warn');if(form.elements.radarrApiKey)form.elements.radarrApiKey.value='';if(form.elements.sonarrApiKey)form.elements.sonarrApiKey.value='';if(form.elements.siloApiKey)form.elements.siloApiKey.value='';syncAnimeRootState();refreshBranding();syncManifestUrl()}
+function fillSettings(force=false){if(settingsDirty&&!force)return;const form=document.getElementById('settingsForm'),s=state.settings;for(const name of ['addonName','baseUrl','moviesPath','tvPath','animePath','scanIntervalMinutes','minimumFileSizeMb','streamTokenExpiryHours','longLivedStreamTokens','adminUsername','autoRequestEnabled','radarrEnabled','radarrUrl','sonarrEnabled','sonarrUrl','sonarrSeparateAnimeRoot','sonarrMonitorWholeSeries','siloEnabled','siloUrl','siloTranscodeQuality','showDirectPlay','fallbackAddonEnabled','fallbackAddonTimeoutMs','fallbackAddonUseForMissing','fallbackAddonBeforeTranscode','fallbackAddonMaxAttempts','fallbackAddonStartupBudgetMs','fallbackAddonMaxResolution','fallbackAddonAllowResolutionDowngrade','fallbackAddonNetworkAdaptation','fallbackAddonNetworkHeadroomPercent','fallbackAddonNetworkMemoryMinutes','fallbackAddonColdStartMbps'])if(form.elements[name])form.elements[name].value=String(s[name]??'');setSelectValue(form.elements.radarrRootFolderPath,s.radarrRootFolderPath,s.radarrRootFolderPath);setSelectValue(form.elements.radarrQualityProfileId,s.radarrQualityProfileId,s.radarrQualityProfileId?'Profile #'+s.radarrQualityProfileId:'Not selected');setSelectValue(form.elements.sonarrRootFolderPath,s.sonarrRootFolderPath,s.sonarrRootFolderPath);setSelectValue(form.elements.sonarrAnimeRootFolderPath,s.sonarrAnimeRootFolderPath,s.sonarrAnimeRootFolderPath);setSelectValue(form.elements.sonarrQualityProfileId,s.sonarrQualityProfileId,s.sonarrQualityProfileId?'Profile #'+s.sonarrQualityProfileId:'Not selected');setSelectValue(form.elements.sonarrAnimeQualityProfileId,s.sonarrAnimeQualityProfileId,s.sonarrAnimeQualityProfileId?'Profile #'+s.sonarrAnimeQualityProfileId:'Use normal TV quality profile');setSelectValue(form.elements.siloProfileId,s.siloProfileId,s.siloProfileId?'Profile '+s.siloProfileId:'Not selected');document.getElementById('tmdbStatus').textContent=s.metadataProvider||'Automatic metadata is active.';const radarrStatus=document.getElementById('radarrStatus');radarrStatus.textContent=s.radarrConfigured?'API key saved.':'No API key saved.';radarrStatus.className='integration-status '+(s.radarrConfigured?'good':'warn');const sonarrStatus=document.getElementById('sonarrStatus');sonarrStatus.textContent=s.sonarrConfigured?'API key saved.':'No API key saved.';sonarrStatus.className='integration-status '+(s.sonarrConfigured?'good':'warn');const siloStatus=document.getElementById('siloStatus');siloStatus.textContent=s.siloConfigured?'API key saved.':'No API key saved.';siloStatus.className='integration-status '+(s.siloConfigured?'good':'warn');const fallbackStatus=document.getElementById('fallbackAddonStatus');fallbackStatus.textContent=s.fallbackAddonConfigured?'Private manifest URL saved.':'No manifest URL saved.';fallbackStatus.className='integration-status '+(s.fallbackAddonConfigured?'good':'warn');if(form.elements.radarrApiKey)form.elements.radarrApiKey.value='';if(form.elements.sonarrApiKey)form.elements.sonarrApiKey.value='';if(form.elements.siloApiKey)form.elements.siloApiKey.value='';if(form.elements.fallbackAddonManifestUrl)form.elements.fallbackAddonManifestUrl.value='';syncAnimeRootState();refreshBranding();syncManifestUrl()}
 async function load(){const request=++stateRequest,[data,requestData]=await Promise.all([api('/admin/api/state'),api('/admin/api/requests')]);if(request!==stateRequest)return;state={...data,requests:requestData.requests||[]};render()}
 function switchView(id){document.querySelectorAll('.view').forEach(v=>v.classList.toggle('active',v.id===id));document.querySelectorAll('.nav button').forEach(b=>b.classList.toggle('active',b.dataset.view===id));window.scrollTo({top:0,behavior:'smooth'})}
 function hdrType(file){const raw=JSON.stringify(file.probe||{}).toLowerCase();if(raw.includes('dovi')||raw.includes('dolby vision'))return 'Dolby Vision';if(raw.includes('smpte2084')||raw.includes('smpte st 2084'))return 'HDR10 / PQ';if(raw.includes('arib-std-b67'))return 'HLG';return 'Not detected'}

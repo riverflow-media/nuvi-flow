@@ -88,6 +88,67 @@ The current integration provides:
   two seconds or more produce one structured summary at controlled intervals,
   providing the evidence needed for bounded quality fallback without log floods
 - A unique Nuvi-Flow playback ID in structured session logs and the `X-Nuvi-Flow-Playback-Id` response header
+- An optional private Stremio-compatible fallback addon. Auto can use it when
+  local media is missing, before a likely full video transcode, or when a
+  reliable short-lived observation indicates that the current device/network
+  pair cannot sustain the local source. Nuvi-Flow accepts only immediately playable public HTTPS file
+  URLs, keeps provider credentials and candidate URLs server-side, and proxies
+  byte ranges through an expiring session token. AIOStreams is validated by its
+  manifest and is the reference provider
+
+The fallback addon is disabled by default. Configure it under **Settings →
+Fallback addon** using the private installed manifest URL. When local media is
+missing, fallback playback and the existing Radarr/Sonarr request proceed
+independently, so a local copy is still prepared for next time. A 5-second timeout,
+30-second result cache, and single-flight lookup prevent a slow addon from
+stalling or duplicating requests. If no safe candidate is returned, Auto
+continues through Silo. Fixed-quality Silo selections do not use the fallback.
+Nuvi-Flow inspects all results in the bounded addon response, then retains the
+configured number of safe candidates (10 by default, maximum 25). Structured
+AIOStreams size, duration, bitrate, resolution, and quality metadata is used
+when available. Leading high-quality choices and smaller cross-resolution
+alternatives are both retained, avoiding a pool made entirely of very large 4K
+remuxes. If a candidate fails
+before any bytes are sent to the player, Nuvi-Flow advances within a bounded
+15-second budget and keeps the first working candidate sticky for later range
+and seek requests.
+
+Nuvi-Flow requests AIOStreams' extended stream metadata using its documented
+client identity header. When AIOStreams or the upstream response supplies a file size and the local
+media runtime is known, Nuvi-Flow also performs a one-time startup probe of up
+to 512 KiB (and no more than three seconds). It compares measured upstream
+throughput with the candidate's estimated average bitrate plus 35% headroom. A
+100 GB 4K stream can therefore yield to a smaller 4K or 1080p candidate on a
+slower connection. The probe bytes are forwarded to the player rather than
+downloaded twice. Results without usable size metadata still participate in
+normal availability failover. Candidate count, startup budget, resolution
+ceiling, downgrade behavior, headroom, observation lifetime, and an optional
+cold-start Mbps ceiling are configurable in the dashboard.
+
+Successful direct and fallback proxy transfers create a temporary effective
+delivery estimate for a pseudonymous device and hashed network context. Three
+uninterrupted samples are required before the estimate can influence a future
+Auto decision; pauses, seeks, abandoned requests, short ranges, and errors are
+ignored. The estimate expires after 45 minutes by default and never becomes a
+permanent device capability. Raw IP addresses and private addon URLs are not
+stored. If the reverse proxy does not supply a trustworthy client address,
+Nuvi-Flow does not use the observation to reject local direct playback.
+
+This foundation selects and probes the fallback before a predicted video
+conversion; it does not replace a stream after playback has already started.
+The addon protocol does not provide Nuvi-Flow with a reliable player position
+or source-swap event, so a transparent mid-playback handoff would risk restarting
+or corrupting playback. HLS candidates are also excluded until their nested
+manifests can be proxied with the same URL controls as Silo.
+
+For AIOStreams, use a dedicated fallback configuration rather than the same
+profile you browse manually. Recommended defaults are: only the debrid service
+you actually use, cached results only, P2P disabled, season packs excluded,
+exact title plus season/episode matching, and sorting by cached status,
+resolution, quality, then size. Keep individual addon timeouts below Nuvi-Flow's
+outer lookup timeout. After importing a credential-free configuration, add the
+debrid API key in AIOStreams, save it as a private installation, and paste that
+private `manifest.json` URL into Nuvi-Flow. Do not publish or commit that URL.
 
 Auto does not send a bandwidth estimate when none is known. It offers the
 scanned source container and primary codecs to the original route first, while
@@ -231,6 +292,7 @@ The password-protected dashboard provides:
 - Sonarr connection testing
 - Silo connection and profile testing
 - Silo transcode-quality selection
+- Private fallback-addon connection testing and timeout control
 - Route-neutral Auto playback across original, progressive-remux, HLS-remux,
   audio-conversion, and video-transcode delivery
 - Optional separate Direct Play stream visibility
@@ -450,8 +512,21 @@ Common environment variables include:
 | `SILO_PROFILE_ID` | Silo playback profile ID |
 | `SILO_TRANSCODE_QUALITY` | Silo quality policy; `auto` (default) preserves source resolution when viable, while a named rung is a fixed override |
 | `SHOW_DIRECT_PLAY` | Show a separate original-file Direct entry when Silo is available; default `true` |
+| `FALLBACK_ADDON_ENABLED` | Enable the optional pre-transcode fallback addon; default `false` |
+| `FALLBACK_ADDON_MANIFEST_URL` | Private installed manifest URL for AIOStreams or another Stremio-compatible stream addon; never returned to the browser |
+| `FALLBACK_ADDON_TIMEOUT_MS` | Manifest/stream lookup timeout from 1,000–15,000 ms; default `5000` |
+| `FALLBACK_ADDON_USE_FOR_MISSING` | Play through fallback while still queuing missing media in Radarr/Sonarr; default `true` |
+| `FALLBACK_ADDON_BEFORE_TRANSCODE` | Try external direct playback before a likely Silo video transcode; default `true` |
+| `FALLBACK_ADDON_MAX_ATTEMPTS` | Maximum safe candidates retained/contacted, 1–25; default `10` |
+| `FALLBACK_ADDON_STARTUP_BUDGET_MS` | Total candidate failover budget, 5,000–30,000 ms; default `15000` |
+| `FALLBACK_ADDON_MAX_RESOLUTION` | Candidate ceiling: `auto`, `2160p`, `1080p`, `720p`, or `480p` |
+| `FALLBACK_ADDON_ALLOW_RESOLUTION_DOWNGRADE` | Permit a lower-resolution sustainable candidate; default `true` |
+| `FALLBACK_ADDON_NETWORK_ADAPTATION` | Use qualified temporary device/network observations; default `true` |
+| `FALLBACK_ADDON_NETWORK_HEADROOM_PERCENT` | Required capacity above average bitrate; default `35` |
+| `FALLBACK_ADDON_NETWORK_MEMORY_MINUTES` | Temporary observation lifetime, 10–120 minutes; default `45` |
+| `FALLBACK_ADDON_COLD_START_MBPS` | Optional first-play ceiling in Mbps; `0` means no ceiling |
 
-Radarr, Sonarr, Silo, Anime root/profile selections, addon branding, and other runtime settings can be managed from the admin dashboard.
+Radarr, Sonarr, Silo, fallback addon, Anime root/profile selections, addon branding, and other runtime settings can be managed from the admin dashboard.
 
 ## Development
 

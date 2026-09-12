@@ -21,6 +21,8 @@ import { MediaScanner } from './services/scanner.js';
 import { PlaybackSessionRegistry } from './services/playback/playback-sessions.js';
 import { DeviceCapabilityStore } from './services/playback/device-capabilities.js';
 import { PlaybackService } from './services/playback/playback-service.js';
+import { FallbackAddonService } from './services/playback/fallback-addon.js';
+import { NetworkProfileStore } from './services/playback/network-profiles.js';
 import { RequestService } from './services/requester.js';
 import { SiloService } from './services/silo-service.js';
 import { SiloFileMappingStore } from './services/silo-file-mappings.js';
@@ -38,6 +40,8 @@ export interface BuiltApp {
   playbackSessions: PlaybackSessionRegistry;
   deviceCapabilities: DeviceCapabilityStore;
   playback: PlaybackService;
+  fallbackAddon: FallbackAddonService;
+  networkProfiles: NetworkProfileStore;
 }
 
 export async function buildApp(config: AppConfig): Promise<BuiltApp> {
@@ -84,10 +88,18 @@ export async function buildApp(config: AppConfig): Promise<BuiltApp> {
     deviceCapabilities,
     app.log
   );
+  const fallbackAddon = new FallbackAddonService(settings, app.log);
+  const networkProfiles = new NetworkProfileStore(
+    database,
+    config.streamSecret,
+    config.trustProxy
+  );
+  playback.setFallbackAddon(fallbackAddon);
 
   app.addHook('onClose', async () => {
     playback.close();
     playbackSessions.close();
+    fallbackAddon.close();
   });
   if (!settings.adminPasswordHash) settings.set('adminPasswordHash', await hashPassword(config.adminPassword));
 
@@ -188,16 +200,20 @@ export async function buildApp(config: AppConfig): Promise<BuiltApp> {
       return reply.code(503).send({ status: 'unhealthy' });
     }
   });
-  registerStremioRoutes(app, database, settings, config, requester);
+  registerStremioRoutes(
+    app, database, settings, config, requester, fallbackAddon, networkProfiles
+  );
   registerMediaRoutes(
     app,
     database,
     config,
     settings,
     playback,
-    silo
+    silo,
+    fallbackAddon,
+    networkProfiles
   );
-  registerAdminRoutes(app, database, settings, scanner, tmdb, requester, config, silo);
+  registerAdminRoutes(app, database, settings, scanner, tmdb, requester, config, silo, fallbackAddon);
   app.setNotFoundHandler(async (_request, reply) => reply.code(404).send({ error: 'Not found' }));
   app.setErrorHandler(async (error, request, reply) => {
     request.log.error({ err: error }, 'Request failed');
@@ -215,6 +231,8 @@ export async function buildApp(config: AppConfig): Promise<BuiltApp> {
     silo,
     playbackSessions,
     deviceCapabilities,
-    playback
+    playback,
+    fallbackAddon,
+    networkProfiles
   };
 }

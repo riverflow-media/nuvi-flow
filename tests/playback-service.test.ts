@@ -141,4 +141,60 @@ describe('playback orchestration', () => {
     );
     service.close();
   });
+
+  it('consults the optional fallback only for a likely Auto video transcode', async () => {
+    const tryPlayback = vi.fn(async () => null);
+    const shouldTryForLocal = vi.fn((_file, likelyVideoTranscode) => likelyVideoTranscode);
+    const capabilities = {
+      touchDevice: vi.fn(),
+      getSnapshot: vi.fn(() => ({
+        deviceId: 'device_1234567890abcdef12345678',
+        revision: 'none',
+        capabilities: []
+      }))
+    };
+    const service = new PlaybackService(
+      {} as SiloService,
+      {} as PlaybackSessionRegistry,
+      capabilities as unknown as DeviceCapabilityStore,
+      { info: vi.fn(), warn: vi.fn() },
+      { keepAliveIntervalMs: 0 }
+    );
+    service.setFallbackAddon({ tryPlayback, shouldTryForLocal } as never);
+    const base = {
+      item: { type: 'movie', stremio_id: 'tt1234567' } as MediaItemRow,
+      deviceId: 'device_1234567890abcdef12345678',
+      deviceIdentitySource: 'signed_stream_token',
+      profileId: 'profile-1',
+      authorizationExpiresAt: Date.now() + 60_000
+    };
+    await service.tryFallback({
+      ...base,
+      configuredQuality: 'auto',
+      file: {
+        id: 'hevc', width: 3840, height: 2160,
+        relative_path: 'Movie.mkv', video_codec: 'hevc'
+      } as MediaFileRow
+    });
+    expect(tryPlayback).toHaveBeenCalledOnce();
+
+    await service.tryFallback({
+      ...base,
+      configuredQuality: 'auto',
+      file: {
+        id: 'h264', width: 1920, height: 1080,
+        relative_path: 'Movie.mkv', video_codec: 'h264'
+      } as MediaFileRow
+    });
+    await service.tryFallback({
+      ...base,
+      configuredQuality: '1080p-medium',
+      file: {
+        id: 'fixed', width: 3840, height: 2160,
+        relative_path: 'Movie.mkv', video_codec: 'hevc'
+      } as MediaFileRow
+    });
+    expect(tryPlayback).toHaveBeenCalledTimes(1);
+    service.close();
+  });
 });

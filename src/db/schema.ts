@@ -130,6 +130,22 @@ export const deviceCapabilities = sqliteTable('device_capabilities', {
   index('device_capabilities_evidence_idx').on(table.evidence)
 ]);
 
+export const playbackNetworkProfiles = sqliteTable('playback_network_profiles', {
+  deviceId: text('device_id').notNull(),
+  networkContextId: text('network_context_id').notNull(),
+  contextReliable: integer('context_reliable', { mode: 'boolean' }).notNull(),
+  estimatedMbps: real('estimated_mbps').notNull(),
+  sampleCount: integer('sample_count').notNull().default(1),
+  confidence: real('confidence').notNull().default(0),
+  firstObservedAt: integer('first_observed_at').notNull(),
+  lastObservedAt: integer('last_observed_at').notNull(),
+  expiresAt: integer('expires_at').notNull()
+}, (table) => [
+  uniqueIndex('playback_network_profiles_device_context_uq')
+    .on(table.deviceId, table.networkContextId),
+  index('playback_network_profiles_expiry_idx').on(table.expiresAt)
+]);
+
 export const externalSubtitles = sqliteTable('external_subtitles', {
   id: text('id').primaryKey(),
   mediaFileId: text('media_file_id').notNull().references(() => mediaFiles.id, { onDelete: 'cascade' }),

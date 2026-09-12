@@ -6,7 +6,7 @@ import type {
 } from 'fastify';
 import type { AppDatabase } from '../db/index.js';
 import { parseJson } from '../lib/json.js';
-import { createStreamToken } from '../lib/security.js';
+import { createFallbackMediaToken, createStreamToken } from '../lib/security.js';
 import {
   catalogPreview,
   fullMeta,
@@ -22,6 +22,8 @@ import { matchesAddonAccessToken } from '../lib/addon-access.js';
 import { buildInfo } from '../lib/build-info.js';
 import { deriveDeviceIdentity } from '../services/playback/device-identity.js';
 import { planSiloPlayback } from '../services/playback/playback-policy.js';
+import type { FallbackAddonService } from '../services/playback/fallback-addon.js';
+import type { NetworkProfileStore } from '../services/playback/network-profiles.js';
 
 const manifest = {
   id: 'community.nuviflow',
@@ -74,7 +76,9 @@ export function registerStremioRoutes(
   database: AppDatabase,
   settings: SettingsService,
   config: AppConfig,
-  requester: RequestService
+  requester: RequestService,
+  fallbackAddon: FallbackAddonService,
+  networkProfiles: NetworkProfileStore
 ): void {
   const prefix = '/addon/:accessToken';
   const secureRoute = {
@@ -164,13 +168,6 @@ export function registerStremioRoutes(
           AND mf.episode_start<=? AND mf.episode_end>=? ORDER BY mf.quality DESC`).all(parsed.itemId, parsed.season, parsed.episode, parsed.episode) as MediaFileRow[];
       }
     }
-    if (
-      files.length === 0 &&
-      (type === 'movie' || type === 'series')
-    ) {
-      requester.enqueueMissing(type, id);
-    }
-
     const deviceIdentity = deriveDeviceIdentity({
       installationId: settings.addonAccessToken,
       explicitDeviceId:
@@ -182,6 +179,43 @@ export function registerStremioRoutes(
       ip: request.ip,
       requestScope: request.id
     });
+
+    if (files.length === 0 && (type === 'movie' || type === 'series')) {
+      // Queue acquisition independently: a working AIO fallback must never
+      // suppress the Radarr/Sonarr request that fills the local library.
+      requester.enqueueMissing(type, id);
+      if (
+        settings.fallbackAddonEnabled &&
+        settings.fallbackAddonUseForMissing &&
+        settings.fallbackAddonManifestUrl
+      ) {
+        const expiry = Date.now() + settings.streamTokenExpiryHours * 60 * 60 * 1000;
+        const estimate = settings.fallbackAddonNetworkAdaptation
+          ? networkProfiles.usableEstimateMbps(deviceIdentity.id, request.ip)
+          : null;
+        const fallback = await fallbackAddon.tryPlayback({
+          type,
+          mediaId: id,
+          deviceId: deviceIdentity.id,
+          authorizationExpiresAt: expiry,
+          networkEstimateMbps: estimate,
+          networkContextId: networkProfiles.context(deviceIdentity.id, request.ip).id
+        });
+        if (fallback) {
+          const { token } = createFallbackMediaToken(fallback.id, expiry, config.streamSecret);
+          return reply.header('Cache-Control', 'no-store').send({
+            streams: [{
+              name: 'Nuvi-Flow Auto',
+              title: 'Auto • fallback addon • immediate playback',
+              description: 'Streams now while Radarr or Sonarr continues preparing a local copy',
+              url: `${settings.baseUrl}/fallback-media/${encodeURIComponent(token)}`,
+              behaviorHints: { bingeGroup: `nuvi-flow:fallback:${id}` }
+            }]
+          });
+        }
+      }
+      return reply.header('Cache-Control', 'no-store').send({ streams: [] });
+    }
 
     const streams = files.flatMap((file) => {
       const expiry =

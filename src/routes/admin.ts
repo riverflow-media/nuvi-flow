@@ -22,6 +22,7 @@ import type { SettingsService } from '../services/settings.js';
 import type { TmdbService } from '../services/tmdb.js';
 import type { MetadataSearchResult } from '../services/tmdb.js';
 import { buildInfo } from '../lib/build-info.js';
+import type { FallbackAddonService } from '../services/playback/fallback-addon.js';
 
 const COOKIE_NAME = 'nuviflow_admin';
 
@@ -132,7 +133,8 @@ export function registerAdminRoutes(
   tmdb: TmdbService,
   requester: RequestService,
   config: AppConfig,
-  silo: SiloService
+  silo: SiloService,
+  fallbackAddon: FallbackAddonService
 ): void {
   app.get('/admin/login', async (request, reply) => {
     if (sessionFor(request, config)) return reply.redirect('/admin');
@@ -337,6 +339,22 @@ export function registerAdminRoutes(
 
   app.post('/admin/api/integrations/:service/test', { preHandler: requireAdmin(config, true) }, async (request, reply) => {
     const { service } = request.params as { service: string };
+
+    if (service === 'fallback-addon') {
+      const manifestUrl = (request.body as { manifestUrl?: string })?.manifestUrl?.trim() ||
+        settings.fallbackAddonManifestUrl;
+      if (!manifestUrl) {
+        return reply.code(400).send({ error: 'Fallback addon manifest URL is required' });
+      }
+      try {
+        const connection = await fallbackAddon.testConnection(manifestUrl);
+        return reply.send({ ok: true, service, ...connection });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Connection failed';
+        return reply.code(/must be|does not provide/i.test(message) ? 400 : 502)
+          .send({ error: message });
+      }
+    }
 
     if (!['radarr', 'sonarr', 'silo'].includes(service)) {
       return reply.code(404).send({ error: 'Unknown integration' });
@@ -597,7 +615,13 @@ export function registerAdminRoutes(
     const numeric: Array<[string, number]> = [
       ['scanIntervalMinutes', 1],
       ['minimumFileSizeMb', 0],
-      ['streamTokenExpiryHours', 1]
+      ['streamTokenExpiryHours', 1],
+      ['fallbackAddonTimeoutMs', 1000],
+      ['fallbackAddonMaxAttempts', 1],
+      ['fallbackAddonStartupBudgetMs', 5000],
+      ['fallbackAddonNetworkHeadroomPercent', 0],
+      ['fallbackAddonNetworkMemoryMinutes', 10],
+      ['fallbackAddonColdStartMbps', 0]
     ];
 
     for (const [key, minimum] of numeric) {
@@ -634,7 +658,12 @@ export function registerAdminRoutes(
       'sonarrSeparateAnimeRoot',
       'sonarrMonitorWholeSeries',
       'siloEnabled',
-      'showDirectPlay'
+      'showDirectPlay',
+      'fallbackAddonEnabled',
+      'fallbackAddonUseForMissing',
+      'fallbackAddonBeforeTranscode',
+      'fallbackAddonAllowResolutionDowngrade',
+      'fallbackAddonNetworkAdaptation'
     ]) {
       if (body[key] === 'true' || body[key] === 'false') {
         settings.set(key, body[key]!);
@@ -670,6 +699,62 @@ export function registerAdminRoutes(
       }
 
       settings.set(key, value);
+    }
+
+    if (typeof body.fallbackAddonManifestUrl === 'string' && body.fallbackAddonManifestUrl.trim()) {
+      const value = body.fallbackAddonManifestUrl.trim();
+      let parsed: URL;
+      try {
+        parsed = new URL(value);
+      } catch {
+        return reply.code(400).send({ error: 'Fallback addon manifest URL must be valid' });
+      }
+      if (
+        !['http:', 'https:'].includes(parsed.protocol) ||
+        parsed.username || parsed.password ||
+        !parsed.pathname.endsWith('/manifest.json')
+      ) {
+        return reply.code(400).send({
+          error: 'Fallback addon URL must be an HTTP(S) manifest.json URL without URL credentials'
+        });
+      }
+      settings.set('fallbackAddonManifestUrl', value);
+    }
+
+    if (typeof body.fallbackAddonTimeoutMs === 'string') {
+      const timeout = Number(body.fallbackAddonTimeoutMs);
+      if (!Number.isInteger(timeout) || timeout < 1000 || timeout > 15_000) {
+        return reply.code(400).send({ error: 'fallbackAddonTimeoutMs is invalid' });
+      }
+      settings.set('fallbackAddonTimeoutMs', String(timeout));
+    }
+
+    const boundedFallbackNumbers: Array<[string, number, number]> = [
+      ['fallbackAddonMaxAttempts', 1, 25],
+      ['fallbackAddonStartupBudgetMs', 5000, 30_000],
+      ['fallbackAddonNetworkHeadroomPercent', 0, 100],
+      ['fallbackAddonNetworkMemoryMinutes', 10, 120],
+      ['fallbackAddonColdStartMbps', 0, 10_000]
+    ];
+    for (const [key, minimum, maximum] of boundedFallbackNumbers) {
+      if (typeof body[key] !== 'string') continue;
+      const value = Number(body[key]);
+      const integerRequired = key === 'fallbackAddonMaxAttempts' ||
+        key === 'fallbackAddonStartupBudgetMs' ||
+        key === 'fallbackAddonNetworkMemoryMinutes';
+      if (!Number.isFinite(value) || (integerRequired && !Number.isInteger(value)) ||
+        value < minimum || value > maximum) {
+        return reply.code(400).send({ error: `${key} is invalid` });
+      }
+      settings.set(key, String(value));
+    }
+
+    if (typeof body.fallbackAddonMaxResolution === 'string') {
+      const value = body.fallbackAddonMaxResolution.trim();
+      if (!['auto', '2160p', '1080p', '720p', '480p'].includes(value)) {
+        return reply.code(400).send({ error: 'fallbackAddonMaxResolution is invalid' });
+      }
+      settings.set('fallbackAddonMaxResolution', value);
     }
 
     // Silo playback options.

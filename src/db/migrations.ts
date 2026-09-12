@@ -157,5 +157,20 @@ export const migrations = [
     ON device_capabilities(device_id);
 
   CREATE INDEX IF NOT EXISTS device_capabilities_evidence_idx
-    ON device_capabilities(evidence);`
+    ON device_capabilities(evidence);`,
+  `CREATE TABLE IF NOT EXISTS playback_network_profiles (
+    device_id TEXT NOT NULL,
+    network_context_id TEXT NOT NULL,
+    context_reliable INTEGER NOT NULL CHECK(context_reliable IN (0,1)),
+    estimated_mbps REAL NOT NULL CHECK(estimated_mbps > 0),
+    sample_count INTEGER NOT NULL DEFAULT 1 CHECK(sample_count > 0),
+    confidence REAL NOT NULL DEFAULT 0 CHECK(confidence >= 0 AND confidence <= 1),
+    first_observed_at INTEGER NOT NULL,
+    last_observed_at INTEGER NOT NULL,
+    expires_at INTEGER NOT NULL,
+    PRIMARY KEY(device_id, network_context_id)
+  );
+
+  CREATE INDEX IF NOT EXISTS playback_network_profiles_expiry_idx
+    ON playback_network_profiles(expires_at);`
 ] as const;
