@@ -31,8 +31,9 @@ before its image is published.
 ## Completed pause/resume liveness foundation
 
 - Treat actual proxied manifest and segment requests as local session activity
-- While that bounded local lease remains active, send lightweight manifest HEAD
-  requests so Silo does not classify a Nuvio pause as an abandoned unpaused session
+- While that bounded local lease remains active, send authenticated manifest GET
+  requests every 15 seconds so Silo's playback handler records activity and does
+  not classify a short Nuvio pause as an abandoned unpaused session
 - Keep the lease capped by the signed playback authorization and stop liveness
   checks after local expiry, preventing indefinite abandoned GPU work
 - Preserve Silo's existing reconstruction and segment recovery behavior; no
@@ -74,8 +75,9 @@ the declared SDR target.
 - Retain 4K when Silo selects direct or remux delivery
 - If Auto instead selects a full 4K video encode, use Silo's protocol-v3
   `quality_change` replan before returning the playback URL
-- Select the highest 1080p-or-lower rung advertised by Silo for the current
-  source; Nuvi-Flow does not maintain a competing bitrate table
+- Prefer the advertised `1080p-medium` rung for full 4K encodes after field
+  evidence showed `1080p-high` could not maintain a safe segment buffer; use
+  another 1080p-or-lower rung only when medium is unavailable
 - Replan at most once, preserve fixed administrator quality choices, and keep
   the existing single-flight session boundary around start plus replan
 

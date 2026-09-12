@@ -46,8 +46,9 @@ The current integration provides:
 - An optional Silo Auto HLS stream that asks protocol v3 to preserve the source
   resolution, including 4K, when viable
 - A bounded Auto cost guard: 4K direct/remux plans remain 4K, while a plan that
-  requires a full 4K video encode is replanned once to the highest 1080p rung
-  Silo advertises for that source
+  requires a full 4K video encode is replanned once to the advertised
+  `1080p-medium` rung (falling back to another 1080p-or-lower rung only when
+  medium is unavailable)
 - Conservative unknown-device declarations (H.264, AAC stereo, SDR) so Silo
   can copy compatible video, adapt audio independently, or transcode video only
   when required
@@ -77,8 +78,9 @@ The current integration provides:
 - A dedicated playback orchestration service that owns capability lookup, policy
   planning, session reuse, Silo start/replan validation, and playback summaries
 - Bounded pause/resume liveness for clients without pause events: recent proxy
-  traffic extends the local lease and lightweight manifest checks keep the Silo
-  session available during a short pause; abandoned sessions still expire
+  traffic extends the local lease and authenticated Silo manifest GETs refresh
+  the upstream session every 15 seconds during a short pause; abandoned sessions
+  still expire
 - A unique Nuvi-Flow playback ID in structured session logs and the `X-Nuvi-Flow-Playback-Id` response header
 
 Auto currently targets the safe HLS proxy path and does not send a bandwidth

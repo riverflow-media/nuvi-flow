@@ -418,7 +418,7 @@ describe('Stremio and media HTTP endpoints', () => {
     expect(response.headers.location).toMatch(/^\/silo-media\//);
   });
 
-  it('replans a full 4K Auto encode once to the highest advertised 1080p rung', async () => {
+  it('replans a full 4K Auto encode once to the sustainable advertised 1080p rung', async () => {
     built.settings.set('siloProfileId', 'profile-1');
     built.settings.set('siloTranscodeQuality', 'auto');
     built.database.sqlite.prepare(
@@ -458,6 +458,7 @@ describe('Stremio and media HTTP endpoints', () => {
               { label: 'original', height: 2160, preserves_source: true },
               { label: '2160p-high', height: 2160, preserves_source: false },
               { label: '1080p-high', height: 1080, preserves_source: false },
+              { label: '1080p-medium', height: 1080, preserves_source: false },
               { label: '720p-high', height: 720, preserves_source: false }
             ],
             stream: {
@@ -478,7 +479,7 @@ describe('Stremio and media HTTP endpoints', () => {
           plan_attempt_key: 'v3:1111111111111111',
           attempted_plan_keys: [],
           attempt_count: 1,
-          quality_preference: '1080p-high'
+          quality_preference: '1080p-medium'
         });
         return new Response(JSON.stringify({
           protocol_version: 3,
@@ -497,7 +498,7 @@ describe('Stremio and media HTTP endpoints', () => {
               height: 1080
             },
             stream: {
-              url: '/playback/transcode/adaptive-session/1080p-high.m3u8',
+              url: '/playback/transcode/adaptive-session/1080p-medium.m3u8',
               protocol: 'hls',
               headers: {},
               header_refresh: 'none'
@@ -520,7 +521,7 @@ describe('Stremio and media HTTP endpoints', () => {
       decodeURIComponent(encodedToken),
       secret
     )?.path).toBe(
-      '/api/v1/playback/transcode/adaptive-session/1080p-high.m3u8'
+      '/api/v1/playback/transcode/adaptive-session/1080p-medium.m3u8'
     );
     expect(fetchMock.mock.calls.filter(([url]) =>
       String(url).endsWith('/replan')

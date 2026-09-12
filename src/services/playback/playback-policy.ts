@@ -91,8 +91,8 @@ interface SiloPlanForCostGuard {
 }
 
 const autoTranscodeFallbackLadder = [
-  '1080p-high',
   '1080p-medium',
+  '1080p-high',
   '1080p-low',
   '720p-high',
   '720p-medium',

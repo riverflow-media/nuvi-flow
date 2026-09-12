@@ -127,4 +127,32 @@ describe('Silo service boundary', () => {
         .toBe('Bearer candidate-key');
     }
   });
+
+  it('keeps playback alive through the registered manifest GET route', async () => {
+    const fetchMock = vi.fn(async () => new Response('#EXTM3U\n', {
+      status: 200,
+      headers: { 'Content-Type': 'application/vnd.apple.mpegurl' }
+    }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const service = new SiloService({
+      siloUrl: 'http://silo:8080',
+      siloApiKey: 'server-side-secret'
+    } as SettingsService);
+
+    await expect(service.keepPlaybackAlive(
+      '/api/v1/playback/transcode/session-1/master.m3u8'
+    )).resolves.toBe(true);
+
+    expect(fetchMock).toHaveBeenCalledOnce();
+    const [url, init] = fetchMock.mock.calls[0]!;
+    const headers = new Headers(init?.headers);
+    expect(String(url)).toBe(
+      'http://silo:8080/api/v1/playback/transcode/session-1/master.m3u8'
+    );
+    expect(init?.method).toBe('GET');
+    expect(headers.get('Authorization')).toBe('Bearer server-side-secret');
+    expect(headers.get('Accept')).toBe('application/vnd.apple.mpegurl');
+    expect(headers.get('Cache-Control')).toBe('no-cache');
+  });
 });

@@ -65,7 +65,7 @@ export class PlaybackService {
     private readonly logger: PlaybackLogger,
     options: PlaybackServiceOptions = {}
   ) {
-    const intervalMs = options.keepAliveIntervalMs ?? 30_000;
+    const intervalMs = options.keepAliveIntervalMs ?? 15_000;
     if (intervalMs > 0) {
       this.keepAliveTimer = setInterval(
         () => void this.keepAliveActiveSessions(),

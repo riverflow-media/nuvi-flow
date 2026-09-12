@@ -174,7 +174,11 @@ export class SiloService {
 
   async keepPlaybackAlive(pathname: string): Promise<boolean> {
     const response = await this.fetchMedia(pathname, {
-      method: 'HEAD',
+      method: 'GET',
+      headers: {
+        Accept: 'application/vnd.apple.mpegurl',
+        'Cache-Control': 'no-cache'
+      },
       signal: AbortSignal.timeout(10_000)
     });
     await response.body?.cancel();

@@ -117,13 +117,14 @@ describe('conservative Silo playback policy', () => {
     expect(normalizeSiloQualityPreference('not-a-rung')).toBe('auto');
   });
 
-  it('selects the highest advertised 1080p fallback for a full 4K Auto encode', () => {
+  it('prefers the sustainable 1080p fallback for a full 4K Auto encode', () => {
     expect(selectAutoTranscodeFallback('auto', {
       delivery: 'server_transcode_hls',
       effective_recipe: { height: 2160 },
       available_qualities: [
         { label: 'original' },
         { label: '2160p-high' },
+        { label: '1080p-high' },
         { label: '1080p-medium' },
         { label: '720p-high' }
       ]
