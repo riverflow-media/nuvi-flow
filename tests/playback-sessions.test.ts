@@ -340,6 +340,55 @@ describe('PlaybackSessionRegistry', () => {
     await registry.close();
   });
 
+  it('emits capability evidence only after a sustained clean HLS segment run', async () => {
+    let now = 1_000;
+    const registry = new PlaybackSessionRegistry({
+      cleanupIntervalMs: 0,
+      now: () => now
+    });
+    await registry.getOrCreate(
+      baseKey,
+      1_000_000,
+      async () => ({
+        ...started,
+        capabilityClaims: [{
+          category: 'video_codec',
+          capability: 'hevc'
+        }]
+      })
+    );
+    const segment =
+      '/api/v1/playback/transcode/silo-session-a/segment/seg_00001.ts';
+
+    for (let index = 0; index < 8; index += 1) {
+      expect(registry.recordUpstreamResponse(segment, 100, 200))
+        .toMatchObject({ capabilityEvidenceDue: false });
+      now += 2_500;
+    }
+    expect(registry.recordUpstreamResponse(segment, 2_600, 200))
+      .toMatchObject({ capabilityEvidenceDue: false, slow: true });
+    now += 2_500;
+
+    for (let index = 0; index < 14; index += 1) {
+      expect(registry.recordUpstreamResponse(segment, 100, 200))
+        .toMatchObject({ capabilityEvidenceDue: false });
+      now += 2_500;
+    }
+    expect(registry.recordUpstreamResponse(segment, 100, 200))
+      .toMatchObject({
+        capabilityEvidenceDue: true,
+        deviceId: baseKey.deviceId,
+        capabilityClaims: [{
+          category: 'video_codec',
+          capability: 'hevc'
+        }]
+      });
+    now += 2_500;
+    expect(registry.recordUpstreamResponse(segment, 100, 200))
+      .toMatchObject({ capabilityEvidenceDue: false });
+    await registry.close();
+  });
+
   it('claims only one runtime fallback and routes old manifest tokens to it', async () => {
     const registry = new PlaybackSessionRegistry({ cleanupIntervalMs: 0 });
     const requestProfile = planSiloPlayback(

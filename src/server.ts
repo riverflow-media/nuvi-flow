@@ -215,7 +215,14 @@ export async function buildApp(config: AppConfig): Promise<BuiltApp> {
     }
   });
   registerStremioRoutes(
-    app, database, settings, config, requester, fallbackAddon, networkProfiles
+    app,
+    database,
+    settings,
+    config,
+    requester,
+    fallbackAddon,
+    networkProfiles,
+    deviceCapabilities
   );
   registerMediaRoutes(
     app,
@@ -238,7 +245,8 @@ export async function buildApp(config: AppConfig): Promise<BuiltApp> {
     config,
     silo,
     fallbackAddon,
-    playbackActivity
+    playbackActivity,
+    deviceCapabilities
   );
   app.setNotFoundHandler(async (_request, reply) => reply.code(404).send({ error: 'Not found' }));
   app.setErrorHandler(async (error, request, reply) => {

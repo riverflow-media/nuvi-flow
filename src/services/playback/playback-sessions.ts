@@ -4,6 +4,7 @@ import type {
   SiloPlaybackRequestProfile,
   SiloQualityPreference
 } from './playback-policy.js';
+import type { PlaybackCapabilityClaim } from './capability-learning.js';
 
 export interface PlaybackRuntimeFallback {
   profileId: string;
@@ -35,6 +36,8 @@ export interface PlaybackSessionStart {
   upstreamPath: string;
   delivery: string;
   planSummary?: PlaybackPlanSummary;
+  capabilityClaims?: PlaybackCapabilityClaim[];
+  sourceBitrate?: number | null;
   runtimeFallback?: PlaybackRuntimeFallback;
 }
 
@@ -66,6 +69,9 @@ export interface PlaybackSession extends PlaybackSessionStart {
   lastMediaStatus: number | null;
   consecutiveSlowSegmentCount: number;
   consecutiveFailureCount: number;
+  successfulSegmentCount: number;
+  cleanMediaStartedAt: number;
+  capabilityEvidenceRecorded: boolean;
   lastPositionSeconds: number;
   pathAliases: string[];
 }
@@ -81,6 +87,9 @@ export interface PlaybackMediaObservation {
   summaryDue: boolean;
   fallbackDue: boolean;
   fallbackReason: PlaybackRuntimeFallback['reason'];
+  capabilityEvidenceDue: boolean;
+  deviceId: string;
+  capabilityClaims: PlaybackCapabilityClaim[];
   playbackKey: string;
 }
 
@@ -298,6 +307,9 @@ export class PlaybackSessionRegistry {
         lastMediaStatus: null,
         consecutiveSlowSegmentCount: 0,
         consecutiveFailureCount: 0,
+        successfulSegmentCount: 0,
+        cleanMediaStartedAt: 0,
+        capabilityEvidenceRecorded: false,
         lastPositionSeconds: started.runtimeFallback?.plan.timeline
           ?.source_start_seconds || 0,
         pathAliases: []
@@ -437,6 +449,21 @@ export class PlaybackSessionRegistry {
       session.consecutiveFailureCount = failed
         ? session.consecutiveFailureCount + 1
         : 0;
+      const successfulSegment = segment && !slow && status >= 200 && status < 300;
+      if (successfulSegment) {
+        if (session.successfulSegmentCount === 0) {
+          session.cleanMediaStartedAt = this.now();
+        }
+        session.successfulSegmentCount += 1;
+      } else if (segment) {
+        session.successfulSegmentCount = 0;
+        session.cleanMediaStartedAt = 0;
+      }
+      const capabilityEvidenceDue = !session.capabilityEvidenceRecorded &&
+        Boolean(session.capabilityClaims?.length) &&
+        session.successfulSegmentCount >= 15 &&
+        this.now() - session.cleanMediaStartedAt >= 30_000;
+      if (capabilityEvidenceDue) session.capabilityEvidenceRecorded = true;
       const fallbackReason = session.runtimeFallback?.state === 'ready'
         ? session.consecutiveFailureCount >= 2
           ? 'status_failures'
@@ -454,6 +481,9 @@ export class PlaybackSessionRegistry {
         requestCount: session.mediaRequestCount,
         slowResponseCount: session.slowMediaResponseCount,
         slow,
+        capabilityEvidenceDue,
+        deviceId: session.deviceId,
+        capabilityClaims: session.capabilityClaims || [],
         fallbackDue: fallbackReason !== null,
         fallbackReason,
         summaryDue: slow && (
@@ -506,6 +536,7 @@ export class PlaybackSessionRegistry {
       upstreamPath: string;
       delivery: string;
       siloSessionId?: string | null;
+      capabilityClaims?: PlaybackCapabilityClaim[];
     } | null
   ): boolean {
     const session = this.activeSessions.get(playbackKey);
@@ -530,6 +561,10 @@ export class PlaybackSessionRegistry {
       audioCodec: result.plan.effective_recipe?.audio_codec || null,
       dynamicRange: result.plan.effective_recipe?.dynamic_range || null
     };
+    session.capabilityClaims = result.capabilityClaims || [];
+    session.successfulSegmentCount = 0;
+    session.cleanMediaStartedAt = 0;
+    session.capabilityEvidenceRecorded = false;
     if (result.siloSessionId) session.siloSessionId = result.siloSessionId;
     session.runtimeFallback.plan = result.plan;
     session.runtimeFallback.state = 'completed';
@@ -584,6 +619,33 @@ export class PlaybackSessionRegistry {
       if (roots.includes(requestedRoot)) return session.playbackId;
     }
 
+    return null;
+  }
+
+  capabilityLearningContext(pathname: string): {
+    playbackId: string;
+    deviceId: string;
+    bitrate: number | null;
+    claims: PlaybackCapabilityClaim[];
+  } | null {
+    const requestedRoot = playbackTransportRoot(pathname);
+    if (!requestedRoot) return null;
+
+    for (const session of this.activeSessions.values()) {
+      if (session.expiresAt <= this.now()) continue;
+      if (!['original_http', 'server_remux_progressive'].includes(session.delivery)) {
+        continue;
+      }
+      const roots = [session.upstreamPath, ...session.pathAliases]
+        .map(playbackTransportRoot);
+      if (!roots.includes(requestedRoot)) continue;
+      return {
+        playbackId: session.playbackId,
+        deviceId: session.deviceId,
+        bitrate: session.sourceBitrate || null,
+        claims: session.capabilityClaims || []
+      };
+    }
     return null;
   }
 

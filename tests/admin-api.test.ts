@@ -127,6 +127,90 @@ describe('admin media detail API', () => {
     transfer.finish();
   });
 
+  it('lists pseudonymous devices and applies validated future-playback overrides', async () => {
+    const deviceId = 'device_1234567890abcdef12345678';
+    built.deviceCapabilities.touchDevice(deviceId, 'explicit');
+    for (let index = 0; index < 3; index += 1) {
+      built.deviceCapabilities.recordEvidence(deviceId, {
+        category: 'video_codec',
+        capability: 'hevc',
+        supported: true,
+        evidence: 'observed_success',
+        confidence: 1
+      });
+    }
+
+    expect((await built.app.inject({
+      method: 'GET',
+      url: '/admin/api/devices'
+    })).statusCode).toBe(401);
+    const listed = await request('GET', '/admin/api/devices');
+    expect(listed.statusCode).toBe(200);
+    expect(listed.json()).toMatchObject({
+      devices: [{
+        id: deviceId,
+        label: 'Device 12345678',
+        identitySource: 'explicit',
+        capabilities: [{
+          category: 'video_codec',
+          capability: 'hevc',
+          state: 'supported',
+          evidence: 'observed_success',
+          successCount: 3
+        }]
+      }],
+      options: expect.arrayContaining([{
+        category: 'video_codec',
+        capability: 'hevc',
+        label: 'HEVC / H.265',
+        group: 'Video'
+      }])
+    });
+    expect(listed.body).not.toContain('user-agent');
+    expect(listed.body).not.toContain('192.168.');
+
+    const noCsrf = await built.app.inject({
+      method: 'PUT',
+      url: `/admin/api/devices/${deviceId}/capabilities`,
+      headers: { cookie },
+      payload: {
+        category: 'video_codec', capability: 'hevc', state: 'unsupported'
+      }
+    });
+    expect(noCsrf.statusCode).toBe(403);
+
+    const overridden = await request(
+      'PUT',
+      `/admin/api/devices/${deviceId}/capabilities`,
+      { category: 'video_codec', capability: 'hevc', state: 'unsupported' }
+    );
+    expect(overridden.statusCode).toBe(200);
+    expect(overridden.json().device.capabilities[0]).toMatchObject({
+      state: 'unsupported',
+      evidence: 'user_override',
+      successCount: 3
+    });
+
+    const restored = await request(
+      'PUT',
+      `/admin/api/devices/${deviceId}/capabilities`,
+      { category: 'video_codec', capability: 'hevc', state: 'auto' }
+    );
+    expect(restored.statusCode).toBe(200);
+    expect(restored.json().device.capabilities[0]).toMatchObject({
+      state: 'supported',
+      evidence: 'observed_success',
+      successCount: 3
+    });
+
+    const invalid = await request(
+      'PUT',
+      `/admin/api/devices/${deviceId}/capabilities`,
+      { category: 'video_codec', capability: 'made-up-codec', state: 'supported' }
+    );
+    expect(invalid.statusCode).toBe(400);
+  });
+
   it('tests Silo through the application Silo service', async () => {
     const testConnection = vi.spyOn(built.silo, 'testConnection')
       .mockResolvedValue({

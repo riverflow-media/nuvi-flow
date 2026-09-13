@@ -146,7 +146,7 @@ describe('conservative Silo playback policy', () => {
     expect(plan.requestProfile.clientCapabilities.codecs_audio).toEqual(['aac']);
   });
 
-  it('uses only explicit supported overrides as device capability claims', () => {
+  it('combines explicit overrides with trusted learned capability claims', () => {
     const plan = planSiloPlayback(
       { width: 3840, height: 2160 },
       'auto',
@@ -157,22 +157,22 @@ describe('conservative Silo playback policy', () => {
         capabilities: [
           {
             category: 'video_codec', capability: 'hevc', supported: true,
-            evidence: 'user_override', confidence: 1, successCount: 0,
+            state: 'supported', evidence: 'user_override', confidence: 1, successCount: 0,
             failureCount: 0, firstObservedAt: 1, lastObservedAt: 1, updatedAt: 1
           },
           {
             category: 'hdr', capability: 'hdr10', supported: true,
-            evidence: 'user_override', confidence: 1, successCount: 0,
+            state: 'supported', evidence: 'user_override', confidence: 1, successCount: 0,
             failureCount: 0, firstObservedAt: 1, lastObservedAt: 1, updatedAt: 1
           },
           {
             category: 'container', capability: 'mkv', supported: true,
-            evidence: 'user_override', confidence: 1, successCount: 0,
+            state: 'supported', evidence: 'user_override', confidence: 1, successCount: 0,
             failureCount: 0, firstObservedAt: 1, lastObservedAt: 1, updatedAt: 1
           },
           {
             category: 'audio_codec', capability: 'truehd', supported: true,
-            evidence: 'observed_success', confidence: .9, successCount: 3,
+            state: 'supported', evidence: 'observed_success', confidence: .9, successCount: 3,
             failureCount: 0, firstObservedAt: 1, lastObservedAt: 1, updatedAt: 1
           }
         ]
@@ -182,7 +182,7 @@ describe('conservative Silo playback policy', () => {
     expect(plan.reason).toBe('explicit_device_overrides');
     expect(plan.requestProfile.clientCapabilities).toMatchObject({
       codecs_video: ['h264', 'hevc'],
-      codecs_audio: ['aac'],
+      codecs_audio: ['aac', 'truehd'],
       containers: ['mp4', 'mkv', 'hls'],
       hdr: true
     });
@@ -191,6 +191,71 @@ describe('conservative Silo playback policy', () => {
         ?.containers
     ).toEqual(['mp4', 'mkv']);
     expect(plan.target.dynamicRange).toBe('hdr');
+  });
+
+  it('uses trusted learned capabilities without pretending they are overrides', () => {
+    const plan = planSiloPlayback(
+      { width: 1920, height: 1080 },
+      'auto',
+      deviceId,
+      {
+        deviceId,
+        revision: 'revision-learned',
+        capabilities: [{
+          category: 'video_codec', capability: 'hevc', supported: true,
+          state: 'supported', evidence: 'observed_success', confidence: .6,
+          successCount: 3, failureCount: 0, firstObservedAt: 1,
+          lastObservedAt: 3, updatedAt: 3
+        }]
+      }
+    );
+
+    expect(plan.reason).toBe('learned_device_capabilities');
+    expect(plan.requestProfile.clientCapabilities.codecs_video)
+      .toEqual(['h264', 'hevc']);
+    expect(plan.requestProfile.clientPlaybackContext.device.platform_details.policy)
+      .toBe('learned_capabilities_v1');
+  });
+
+  it('honors explicit unsupported traits when planning future Auto playback', () => {
+    const plan = planSiloPlayback(
+      {
+        width: 3840,
+        height: 2160,
+        relative_path: 'Example.mkv',
+        video_codec: 'hevc',
+        audio_codec: 'truehd'
+      },
+      'auto',
+      deviceId,
+      {
+        deviceId,
+        revision: 'revision-unsupported',
+        capabilities: [
+          {
+            category: 'max_resolution', capability: '2160p', supported: false,
+            state: 'unsupported', evidence: 'user_override', confidence: 1,
+            successCount: 0, failureCount: 0, firstObservedAt: 1,
+            lastObservedAt: 1, updatedAt: 1
+          },
+          {
+            category: 'video_codec', capability: 'hevc', supported: false,
+            state: 'unsupported', evidence: 'user_override', confidence: 1,
+            successCount: 0, failureCount: 0, firstObservedAt: 1,
+            lastObservedAt: 1, updatedAt: 1
+          }
+        ]
+      }
+    );
+
+    expect(plan.target).toMatchObject({
+      maxResolution: '1080p',
+      likelyVideoTranscode: true
+    });
+    expect(
+      plan.requestProfile.clientPlaybackContext.deliveries.original_http
+        ?.video_codecs
+    ).toEqual(['h264']);
   });
 
   it('normalizes an invalid configured quality to Auto', () => {

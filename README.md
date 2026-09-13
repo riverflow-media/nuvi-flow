@@ -78,6 +78,12 @@ The current integration provides:
 - Persistent pseudonymous device records and capability evidence with declared,
   observed-success, observed-failure, and user-override provenance; raw IP,
   user-agent, and client-header values are not stored
+- Conservative capability learning from sustained successful delivery. Three
+  separate clean playbacks are required before Auto trusts a learned trait,
+  and the confidence decays with a 90-day half-life when it is not observed
+  again
+- An authenticated **Devices** view for reviewing learned evidence and setting
+  explicit Supported, Unsupported, or Auto choices for future playback
 - A dedicated playback orchestration service that owns capability lookup, policy
   planning, session reuse, Silo start/replan validation, and playback summaries
 - Demand-aware pause/resume liveness for clients without pause events: ordinary
@@ -173,10 +179,11 @@ private `manifest.json` URL into Nuvi-Flow. Do not publish or commit that URL.
 
 Auto does not send a bandwidth estimate when none is known. It offers the
 scanned source container and primary codecs to the original route first, while
-progressive/HLS conversion retains conservative compatibility targets. Explicit
-supported overrides can widen those targets, but automatic learning and its
-admin controls are not enabled yet. Known-compatible HDR preservation remains
-a later milestone.
+progressive/HLS conversion retains conservative compatibility targets. Trusted
+learned support and explicit Supported overrides can widen those targets;
+explicit Unsupported choices can prevent an incompatible source trait from
+being offered and can cap 4K Auto playback at 1080p. Fixed-quality selections
+remain binding administrator requests.
 
 Streaming removes Nuvi-Flow's previous segment-sized startup delay and memory
 buffer. Silo protocol v3 does not currently provide encoder FPS or GPU
@@ -194,10 +201,21 @@ invasive browser fingerprinting. Identical clients behind the same proxy may be
 indistinguishable until the client supplies a device identifier.
 
 Capability evidence is keyed only by that pseudonymous device ID. Generic client
-profiles never become support claims. Until explicit evidence exists, playback
-continues to use the conservative H.264/AAC/SDR policy. Capability changes are
-included in the session key, so a session planned under an older capability
-snapshot cannot be incorrectly reused.
+profiles never become support claims. Nuvi-Flow records only low-risk positive
+evidence after sustained delivery: non-baseline video codecs, containers, 4K,
+and unambiguous HDR10. It deliberately does not infer audio passthrough,
+Dolby Vision, or HDR10+ from a transfer because alternate tracks and base-layer
+fallbacks make those results ambiguous. Network, Silo, encoder, pause, seek,
+and abandoned-transfer failures do not automatically blacklist a device.
+
+Three distinct successful playbacks are required before learned evidence changes
+Auto, and observed confidence decays with a 90-day half-life. Administrators can
+set Supported or Unsupported choices under **Devices**; those overrides are
+authoritative until returned to **Auto**, at which point any retained observation
+history becomes effective again. Changes affect future Auto planning and do not
+interrupt a stream already in progress. Capability changes are included in the
+session key, so a session planned under an older effective capability snapshot
+cannot be incorrectly reused.
 
 For exact-path matching to work, the same media file must have the same container path in Nuvi-Flow and Silo. For example, mount the library as `/media/movies` in both containers rather than `/media/movies` in one and `/movies` in the other.
 
@@ -302,6 +320,8 @@ The password-protected dashboard provides:
 - Library overview
 - Live playback activity across direct, Silo original/remux/transcode, and AIO
   fallback routes
+- Pseudonymous playback devices, learned compatibility evidence, and explicit
+  per-device Auto/Supported/Unsupported controls
 - Recently added media
 - Files needing review
 - Manual metadata matching

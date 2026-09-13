@@ -1,4 +1,5 @@
 import type { MediaFileRow, MediaItemRow } from '../../types.js';
+import type { Transform } from 'node:stream';
 import type { SiloService } from '../silo-service.js';
 import type {
   SiloEpisodeReference,
@@ -22,6 +23,11 @@ import {
   PlaybackSessionRetiredError
 } from './playback-sessions.js';
 import { selectRuntimeFallbackQuality } from './runtime-fallback.js';
+import {
+  deliveredPlaybackCapabilityClaims,
+  PlaybackCapabilityLearner,
+  sourcePlaybackCapabilityClaims
+} from './capability-learning.js';
 
 interface PlaybackLogger {
   info(data: Record<string, unknown>, message: string): void;
@@ -84,6 +90,7 @@ export class PlaybackService {
   private readonly terminatedSessionIds = new Set<string>();
   private fallbackAddon: FallbackAddonService | null = null;
   private readonly runtimeFallback: PlaybackServiceOptions['runtimeFallback'];
+  private readonly capabilityLearning: PlaybackCapabilityLearner;
 
   constructor(
     private readonly silo: SiloService,
@@ -95,6 +102,16 @@ export class PlaybackService {
     this.keepAliveIdleAfterMs = options.keepAliveIdleAfterMs ?? 10_000;
     this.now = options.now ?? Date.now;
     this.runtimeFallback = options.runtimeFallback;
+    this.capabilityLearning = new PlaybackCapabilityLearner(
+      this.capabilities,
+      {
+        now: this.now,
+        onError: error => this.logger.warn(
+          { error },
+          'Playback capability evidence could not be recorded'
+        )
+      }
+    );
     this.sessions.setRetirementHandler((session, reason) =>
       this.terminateSiloSession(session.siloSessionId, session.playbackId, reason)
     );
@@ -171,6 +188,13 @@ export class PlaybackService {
     );
 
     if (!observation) return;
+    if (observation.capabilityEvidenceDue) {
+      this.capabilityLearning.recordSuccessfulPlayback(
+        observation.playbackId,
+        observation.deviceId,
+        observation.capabilityClaims
+      );
+    }
     if (observation.summaryDue) {
       this.logger.warn({
         playback_id: observation.playbackId,
@@ -206,6 +230,27 @@ export class PlaybackService {
     return this.sessions.sourceStartSeconds(pathname);
   }
 
+  createDirectCapabilityMeter(
+    playbackId: string,
+    deviceId: string | null,
+    file: MediaFileRow
+  ): Transform | null {
+    if (!deviceId) return null;
+    return this.capabilityLearning.createTransferMeter({
+      playbackId,
+      deviceId,
+      bitrate: file.bitrate,
+      claims: sourcePlaybackCapabilityClaims(file)
+    });
+  }
+
+  createSiloCapabilityMeter(pathname: string): Transform | null {
+    const context = this.sessions.capabilityLearningContext(pathname);
+    return context
+      ? this.capabilityLearning.createTransferMeter(context)
+      : null;
+  }
+
   private usableHlsPlan(decision: SiloPlaybackDecision): SiloPlaybackPlan | null {
     const plan = decision.playback_plan;
     return decision.outcome === 'playable' &&
@@ -239,7 +284,10 @@ export class PlaybackService {
         plan,
         upstreamPath,
         delivery: plan.delivery,
-        siloSessionId: decision.session_id
+        siloSessionId: decision.session_id,
+        // Runtime fallback currently targets H.264/AAC compatibility. It does
+        // not prove any non-baseline device capability.
+        capabilityClaims: []
       });
       if (!applied) {
         await this.terminateSiloSession(
@@ -313,6 +361,7 @@ export class PlaybackService {
 
   async close(): Promise<void> {
     if (this.keepAliveTimer) clearInterval(this.keepAliveTimer);
+    this.capabilityLearning.close();
     await this.sessions.close();
     await Promise.allSettled(this.terminationPromises.values());
   }
@@ -475,18 +524,26 @@ export class PlaybackService {
           }
         }
 
+        const planSummary = {
+          width: plan.effective_recipe?.width || null,
+          height: plan.effective_recipe?.height || null,
+          videoCodec: plan.effective_recipe?.video_codec || null,
+          audioCodec: plan.effective_recipe?.audio_codec || null,
+          dynamicRange: plan.effective_recipe?.dynamic_range || null
+        };
+
         return {
           siloSessionId: decision.session_id || null,
           siloFileId: fileId,
           upstreamPath: '/api/v1' + plan.stream.url,
           delivery: plan.delivery,
-          planSummary: {
-            width: plan.effective_recipe?.width || null,
-            height: plan.effective_recipe?.height || null,
-            videoCodec: plan.effective_recipe?.video_codec || null,
-            audioCodec: plan.effective_recipe?.audio_codec || null,
-            dynamicRange: plan.effective_recipe?.dynamic_range || null
-          },
+          planSummary,
+          sourceBitrate: input.file.bitrate,
+          capabilityClaims: deliveredPlaybackCapabilityClaims(
+            input.file,
+            plan.delivery,
+            planSummary
+          ),
           runtimeFallback: targetQuality ? {
             profileId: input.profileId,
             playbackAttemptId: started.playbackAttemptId,

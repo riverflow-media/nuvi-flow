@@ -86,6 +86,7 @@ async function serveMedia(
   config: AppConfig,
   settings: SettingsService,
   networkProfiles: NetworkProfileStore,
+  playback: PlaybackService,
   playbackActivity: PlaybackActivityService
 ): Promise<FastifyReply> {
   const authorized = authorize(request, database, config);
@@ -129,18 +130,31 @@ async function serveMedia(
   });
   reply.header('X-Nuvi-Flow-Playback-Id', activity.playbackId);
   const stream = fs.createReadStream(authorized.file.absolute_path, { start: range.start, end: range.end });
-  const output = authorized.token!.deviceId && settings.fallbackAddonEnabled &&
+  const capabilityMeter = playback.createDirectCapabilityMeter(
+    activity.playbackId,
+    authorized.token!.deviceId ?? null,
+    authorized.file
+  );
+  const capabilityOutput = capabilityMeter
+    ? stream.pipe(capabilityMeter)
+    : stream;
+  const networkMeter = authorized.token!.deviceId && settings.fallbackAddonEnabled &&
     settings.fallbackAddonNetworkAdaptation
-    ? stream.pipe(networkProfiles.meter(
+    ? networkProfiles.meter(
         authorized.token!.deviceId,
         request.ip,
         settings.fallbackAddonNetworkMemoryMinutes
-      ))
-    : stream;
+      )
+    : null;
+  const output = networkMeter
+    ? capabilityOutput.pipe(networkMeter)
+    : capabilityOutput;
   finishActivityWithStream(activity, output);
   request.raw.once('aborted', () => {
     activity.finish();
     if (!stream.destroyed) stream.destroy();
+    if (capabilityMeter && !capabilityMeter.destroyed) capabilityMeter.destroy();
+    if (networkMeter && !networkMeter.destroyed) networkMeter.destroy();
     if (output !== stream && !output.destroyed) output.destroy();
   });
   return reply.send(output);
@@ -605,13 +619,19 @@ async function serveSiloMedia(
   const stream = Readable.fromWeb(
     response.body as unknown as NodeReadableStream
   );
+  const capabilityMeter = playback.createSiloCapabilityMeter(upstreamPath);
+  const output = capabilityMeter
+    ? stream.pipe(capabilityMeter)
+    : stream;
   const activity = playbackActivity.beginSilo(upstreamPath);
-  if (activity) finishActivityWithStream(activity, stream);
+  if (activity) finishActivityWithStream(activity, output);
   request.raw.once('aborted', () => {
     activity?.finish();
     if (!stream.destroyed) stream.destroy();
+    if (capabilityMeter && !capabilityMeter.destroyed) capabilityMeter.destroy();
+    if (output !== stream && !output.destroyed) output.destroy();
   });
-  return reply.send(stream);
+  return reply.send(output);
 }
 
 export function registerMediaRoutes(
@@ -627,9 +647,9 @@ export function registerMediaRoutes(
 ): void {
   const options = { config: { rateLimit: { max: 1200, timeWindow: '1 minute' } } };
   app.get('/media/:token', options, (request, reply) =>
-    serveMedia(request, reply, database, config, settings, networkProfiles, playbackActivity));
+    serveMedia(request, reply, database, config, settings, networkProfiles, playback, playbackActivity));
   app.head('/media/:token', options, (request, reply) =>
-    serveMedia(request, reply, database, config, settings, networkProfiles, playbackActivity));
+    serveMedia(request, reply, database, config, settings, networkProfiles, playback, playbackActivity));
 
   app.get(
     '/silo-stream/:token',

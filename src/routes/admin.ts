@@ -12,6 +12,7 @@ import {
 import { createSessionToken, createStreamToken, hashPassword, verifyPassword, verifySessionToken, type AdminSession } from '../lib/security.js';
 import { parseJson } from '../lib/json.js';
 import type { MediaFileRow, MediaItemRow, MediaType } from '../types.js';
+import type { DeviceCapabilityCategory } from '../types.js';
 import type { MediaScanner } from '../services/scanner.js';
 import { RadarrClient } from '../services/radarr.js';
 import { SonarrClient } from '../services/sonarr.js';
@@ -27,8 +28,59 @@ import type {
   PlaybackActivityRecord,
   PlaybackActivityService
 } from '../services/playback/playback-activity.js';
+import type {
+  DeviceCapabilityStore,
+  PlaybackDeviceCapabilitySummary
+} from '../services/playback/device-capabilities.js';
 
 const COOKIE_NAME = 'nuviflow_admin';
+
+const deviceCapabilityOptions: Array<{
+  category: DeviceCapabilityCategory;
+  capability: string;
+  label: string;
+  group: string;
+}> = [
+  { category: 'max_resolution', capability: '2160p', label: '4K / 2160p', group: 'Video' },
+  { category: 'video_codec', capability: 'hevc', label: 'HEVC / H.265', group: 'Video' },
+  { category: 'video_codec', capability: 'av1', label: 'AV1', group: 'Video' },
+  { category: 'video_codec', capability: 'vp9', label: 'VP9', group: 'Video' },
+  { category: 'container', capability: 'mkv', label: 'MKV', group: 'Containers' },
+  { category: 'container', capability: 'webm', label: 'WebM', group: 'Containers' },
+  { category: 'container', capability: 'mpegts', label: 'MPEG-TS', group: 'Containers' },
+  { category: 'hdr', capability: 'hdr10', label: 'HDR10', group: 'HDR' },
+  { category: 'hdr', capability: 'hdr10+', label: 'HDR10+', group: 'HDR' },
+  { category: 'hdr', capability: 'dolby_vision', label: 'Dolby Vision', group: 'HDR' },
+  { category: 'audio_codec', capability: 'ac3', label: 'AC-3', group: 'Audio' },
+  { category: 'audio_codec', capability: 'eac3', label: 'E-AC-3', group: 'Audio' },
+  { category: 'audio_codec', capability: 'opus', label: 'Opus', group: 'Audio' },
+  { category: 'audio_codec', capability: 'dts', label: 'DTS', group: 'Audio' },
+  { category: 'audio_codec', capability: 'dts-hd', label: 'DTS-HD', group: 'Audio' },
+  { category: 'audio_codec', capability: 'truehd', label: 'TrueHD', group: 'Audio' }
+];
+
+function publicPlaybackDevice(
+  device: PlaybackDeviceCapabilitySummary
+): Record<string, unknown> {
+  return {
+    id: device.id,
+    label: `Device ${device.id.slice(-8)}`,
+    identitySource: device.identitySource,
+    firstSeenAt: device.firstSeenAt,
+    lastSeenAt: device.lastSeenAt,
+    revision: device.revision,
+    capabilities: device.capabilities.map(capability => ({
+      category: capability.category,
+      capability: capability.capability,
+      state: capability.state,
+      evidence: capability.evidence,
+      confidence: capability.confidence,
+      successCount: capability.successCount,
+      failureCount: capability.failureCount,
+      lastObservedAt: capability.lastObservedAt
+    }))
+  };
+}
 
 type AdminMediaFileRow = MediaFileRow & {
   display_title?: string | null;
@@ -199,7 +251,8 @@ export function registerAdminRoutes(
   config: AppConfig,
   silo: SiloService,
   fallbackAddon: FallbackAddonService,
-  playbackActivity: PlaybackActivityService
+  playbackActivity: PlaybackActivityService,
+  deviceCapabilities: DeviceCapabilityStore
 ): void {
   app.get('/admin/login', async (request, reply) => {
     if (sessionFor(request, config)) return reply.redirect('/admin');
@@ -262,6 +315,60 @@ export function registerAdminRoutes(
         entry.mediaFileId ? fileById.get(entry.mediaFileId) : undefined
       )),
       generatedAt: Date.now()
+    });
+  });
+
+  app.get('/admin/api/devices', {
+    preHandler: requireAdmin(config)
+  }, async (_request, reply) => {
+    return reply.header('Cache-Control', 'no-store').send({
+      devices: deviceCapabilities.listDevices().map(publicPlaybackDevice),
+      options: deviceCapabilityOptions
+    });
+  });
+
+  app.put('/admin/api/devices/:id/capabilities', {
+    preHandler: requireAdmin(config, true)
+  }, async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const body = request.body as {
+      category?: DeviceCapabilityCategory;
+      capability?: string;
+      state?: 'auto' | 'supported' | 'unsupported';
+    };
+    const option = deviceCapabilityOptions.find(candidate =>
+      candidate.category === body?.category &&
+      candidate.capability === body?.capability
+    );
+    if (!option || !['auto', 'supported', 'unsupported'].includes(body?.state || '')) {
+      return reply.code(400).send({ error: 'Invalid device capability selection.' });
+    }
+    const exists = database.sqlite.prepare(
+      'SELECT 1 FROM playback_devices WHERE id=?'
+    ).get(id);
+    if (!exists) {
+      return reply.code(404).send({ error: 'Playback device not found.' });
+    }
+
+    if (body.state === 'auto') {
+      deviceCapabilities.clearUserOverride(
+        id,
+        option.category,
+        option.capability
+      );
+    } else {
+      deviceCapabilities.setUserOverride(
+        id,
+        option.category,
+        option.capability,
+        body.state === 'supported'
+      );
+    }
+    const updated = deviceCapabilities.listDevices()
+      .find(device => device.id === id);
+    return reply.header('Cache-Control', 'no-store').send({
+      ok: true,
+      device: updated ? publicPlaybackDevice(updated) : null
     });
   });
 

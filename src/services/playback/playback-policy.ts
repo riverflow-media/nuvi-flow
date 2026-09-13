@@ -76,6 +76,7 @@ export interface PlaybackPolicyPlan {
   reason:
     | 'conservative_unknown_device'
     | 'source_direct_first'
+    | 'learned_device_capabilities'
     | 'explicit_device_overrides';
   requestProfile: SiloPlaybackRequestProfile;
   target: {
@@ -88,13 +89,14 @@ export interface PlaybackPolicyPlan {
   };
 }
 
-type PlaybackSource = Pick<MediaFileRow, 'width' | 'height'> &
+export type PlaybackSource = Pick<MediaFileRow, 'width' | 'height'> &
   Partial<Pick<
     MediaFileRow,
-    'relative_path' | 'video_codec' | 'audio_codec' | 'audio_channels'
+    'relative_path' | 'video_codec' | 'audio_codec' | 'audio_channels' |
+    'probe_json'
   >>;
 
-function sourceContainer(file: PlaybackSource): string | null {
+export function sourceContainer(file: PlaybackSource): string | null {
   const extension = file.relative_path?.split('.').pop()?.toLowerCase();
 
   if (extension === 'mkv' || extension === 'mk3d') return 'mkv';
@@ -104,7 +106,7 @@ function sourceContainer(file: PlaybackSource): string | null {
   return null;
 }
 
-function sourceVideoCodec(value: string | null | undefined): string | null {
+export function sourceVideoCodec(value: string | null | undefined): string | null {
   const codec = value?.trim().toLowerCase();
 
   if (['h264', 'avc', 'avc1'].includes(codec || '')) return 'h264';
@@ -114,7 +116,7 @@ function sourceVideoCodec(value: string | null | undefined): string | null {
   return null;
 }
 
-function sourceAudioCodec(value: string | null | undefined): string | null {
+export function sourceAudioCodec(value: string | null | undefined): string | null {
   const codec = value?.trim().toLowerCase();
 
   if (['aac', 'mp4a'].includes(codec || '')) return 'aac';
@@ -127,7 +129,7 @@ function sourceAudioCodec(value: string | null | undefined): string | null {
   return null;
 }
 
-function sourceResolutionCeiling(
+export function sourceResolutionCeiling(
   file: PlaybackSource
 ): string {
   const width = file.width || 0;
@@ -153,9 +155,9 @@ export function normalizeSiloQualityPreference(
  * Auto offers Silo's original, progressive-remux, and HLS delivery classes.
  * Its original route includes the scanned source traits so Silo can try the
  * byte-for-byte file before spending resources on conversion. Progressive and
- * HLS retain conservative compatibility targets, while explicit device
- * overrides can widen them. A fixed quality intentionally offers only HLS so
- * the administrator's requested encode rung remains binding.
+ * HLS retain conservative compatibility targets, while trusted learned support
+ * or explicit device overrides can widen them. A fixed quality intentionally
+ * offers only HLS so the administrator's requested encode rung remains binding.
  */
 export function planSiloPlayback(
   file: PlaybackSource,
@@ -165,10 +167,24 @@ export function planSiloPlayback(
 ): PlaybackPolicyPlan {
   const qualityPreference = normalizeSiloQualityPreference(configuredQuality);
   const auto = qualityPreference === 'auto';
-  const maxResolution = sourceResolutionCeiling(file);
-  const userOverrides = capabilitySnapshot?.capabilities.filter(
-    capability => capability.evidence === 'user_override' && capability.supported
-  ) || [];
+  const sourceMaxResolution = sourceResolutionCeiling(file);
+  const capabilities = capabilitySnapshot?.capabilities || [];
+  const userOverrides = capabilities.filter(
+    capability => capability.evidence === 'user_override'
+  );
+  const supportedCapabilities = capabilities.filter(
+    capability => capability.state === 'supported'
+  );
+  const unsupportedCapabilities = capabilities.filter(
+    capability => capability.state === 'unsupported'
+  );
+  const maxResolution = auto && sourceMaxResolution === '2160p' &&
+    unsupportedCapabilities.some(capability =>
+      capability.category === 'max_resolution' &&
+      capability.capability === '2160p'
+    )
+    ? '1080p'
+    : sourceMaxResolution;
   const supportedVideoCodecs = new Set(['h264']);
   const supportedAudioCodecs = new Set(['aac']);
   const supportedContainers = new Set(['mp4']);
@@ -178,30 +194,30 @@ export function planSiloPlayback(
   ]);
   const allowedContainers = new Set(['mkv', 'mp4', 'webm', 'mpegts']);
 
-  for (const override of userOverrides) {
+  for (const capability of supportedCapabilities) {
     if (
-      override.category === 'video_codec' &&
-      allowedVideoCodecs.has(override.capability)
+      capability.category === 'video_codec' &&
+      allowedVideoCodecs.has(capability.capability)
     ) {
-      supportedVideoCodecs.add(override.capability);
+      supportedVideoCodecs.add(capability.capability);
     }
     if (
-      override.category === 'audio_codec' &&
-      allowedAudioCodecs.has(override.capability)
+      capability.category === 'audio_codec' &&
+      allowedAudioCodecs.has(capability.capability)
     ) {
-      supportedAudioCodecs.add(override.capability);
+      supportedAudioCodecs.add(capability.capability);
     }
     if (
-      override.category === 'container' &&
-      allowedContainers.has(override.capability)
+      capability.category === 'container' &&
+      allowedContainers.has(capability.capability)
     ) {
-      supportedContainers.add(override.capability);
+      supportedContainers.add(capability.capability);
     }
   }
 
-  const hdr = userOverrides.some(
-    override => override.category === 'hdr' &&
-      ['hdr10', 'hdr10+', 'dolby_vision'].includes(override.capability)
+  const hdr = supportedCapabilities.some(
+    capability => capability.category === 'hdr' &&
+      ['hdr10', 'hdr10+', 'dolby_vision'].includes(capability.capability)
   );
   const videoCodecs = [...supportedVideoCodecs];
   const audioCodecs = [...supportedAudioCodecs];
@@ -212,21 +228,39 @@ export function planSiloPlayback(
   const scannedVideoCodec = auto ? sourceVideoCodec(file.video_codec) : null;
   const scannedAudioCodec = auto ? sourceAudioCodec(file.audio_codec) : null;
   const scannedContainer = auto ? sourceContainer(file) : null;
+  const explicitlyUnsupported = (
+    category: 'video_codec' | 'audio_codec' | 'container',
+    capability: string | null
+  ): boolean => Boolean(capability && unsupportedCapabilities.some(
+    item => item.category === category && item.capability === capability
+  ));
   const likelyVideoTranscode = Boolean(
     auto &&
     scannedVideoCodec &&
-    !supportedVideoCodecs.has(scannedVideoCodec)
+    (
+      explicitlyUnsupported('video_codec', scannedVideoCodec) ||
+      !supportedVideoCodecs.has(scannedVideoCodec)
+    )
   );
 
-  if (scannedVideoCodec) directVideoCodecs.add(scannedVideoCodec);
-  if (scannedAudioCodec) directAudioCodecs.add(scannedAudioCodec);
-  if (scannedContainer) directContainers.add(scannedContainer);
+  if (!explicitlyUnsupported('video_codec', scannedVideoCodec) && scannedVideoCodec) {
+    directVideoCodecs.add(scannedVideoCodec);
+  }
+  if (!explicitlyUnsupported('audio_codec', scannedAudioCodec) && scannedAudioCodec) {
+    directAudioCodecs.add(scannedAudioCodec);
+  }
+  if (!explicitlyUnsupported('container', scannedContainer) && scannedContainer) {
+    directContainers.add(scannedContainer);
+  }
 
   const usedSourceHints = Boolean(
     scannedVideoCodec || scannedAudioCodec || scannedContainer
   );
-  const usedOverrides = videoCodecs.length > 1 ||
-    audioCodecs.length > 1 || containers.length > 1 || hdr;
+  const usedOverrides = userOverrides.length > 0;
+  const usedLearnedCapabilities = capabilities.some(
+    capability => capability.evidence !== 'user_override' &&
+      capability.state !== 'unknown'
+  );
   const deliveryCapability = (
     deliveryContainers: string[],
     deliveryVideoCodecs = videoCodecs,
@@ -275,9 +309,11 @@ export function planSiloPlayback(
       : 'fixed-silo-hls',
     reason: usedOverrides
       ? 'explicit_device_overrides'
-      : usedSourceHints
-        ? 'source_direct_first'
-        : 'conservative_unknown_device',
+      : usedLearnedCapabilities
+        ? 'learned_device_capabilities'
+        : usedSourceHints
+          ? 'source_direct_first'
+          : 'conservative_unknown_device',
     requestProfile: {
       qualityPreference,
       clientCapabilities: {
@@ -300,9 +336,11 @@ export function planSiloPlayback(
           platform_details: {
             policy: usedOverrides
               ? 'explicit_overrides_v1'
-              : usedSourceHints
-                ? 'source_direct_first_v1'
-                : 'conservative_auto_v1'
+              : usedLearnedCapabilities
+                ? 'learned_capabilities_v1'
+                : usedSourceHints
+                  ? 'source_direct_first_v1'
+                  : 'conservative_auto_v1'
           }
         },
         output: {

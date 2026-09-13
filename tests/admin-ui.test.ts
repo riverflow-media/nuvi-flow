@@ -163,6 +163,82 @@ describe('media details modal', () => {
     expect(view.textContent).not.toContain('silo-session');
   });
 
+  it('loads pseudonymous devices on demand and saves a manual override', async () => {
+    const device = {
+      id: 'device_1234567890abcdef12345678',
+      label: 'Device 12345678',
+      identitySource: 'explicit',
+      firstSeenAt: Date.now() - 60_000,
+      lastSeenAt: Date.now(),
+      revision: 'revision-1',
+      capabilities: [{
+        category: 'video_codec', capability: 'hevc', state: 'supported',
+        evidence: 'observed_success', confidence: .6, successCount: 3,
+        failureCount: 0, lastObservedAt: Date.now()
+      }]
+    };
+    const options = [{
+      category: 'video_codec', capability: 'hevc',
+      label: 'HEVC / H.265', group: 'Video'
+    }];
+    const fetchMock = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      if (String(input) === '/admin/api/state') return json(appState());
+      if (String(input) === '/admin/api/devices') {
+        return json({ devices: [device], options });
+      }
+      if (
+        String(input).endsWith('/capabilities') &&
+        init?.method === 'PUT'
+      ) {
+        return json({
+          ok: true,
+          device: {
+            ...device,
+            revision: 'revision-2',
+            capabilities: [{
+              ...device.capabilities[0],
+              state: 'unsupported',
+              evidence: 'user_override',
+              confidence: 1
+            }]
+          }
+        });
+      }
+      return json({ error: 'Unexpected request' }, 500);
+    });
+    install(fetchMock);
+    await flush();
+
+    expect(fetchMock).not.toHaveBeenCalledWith('/admin/api/devices', expect.anything());
+    document.querySelector<HTMLButtonElement>('[data-view="devices"]')!.click();
+    await flush();
+
+    const view = document.querySelector('#devices')!;
+    expect(view.classList.contains('active')).toBe(true);
+    expect(view.textContent).toContain('Device 12345678');
+    expect(view.textContent).toContain('HEVC / H.265');
+    expect(view.textContent).toContain('Learned from 3 clean playbacks');
+    const select = view.querySelector<HTMLSelectElement>('[data-device-capability]')!;
+    expect(select.value).toBe('auto');
+
+    select.value = 'deny';
+    select.dispatchEvent(new Event('change', { bubbles: true }));
+    await flush();
+
+    const updateCall = fetchMock.mock.calls.find(call =>
+      String(call[0]).endsWith('/capabilities')
+    );
+    expect(updateCall?.[1]).toMatchObject({ method: 'PUT' });
+    expect(JSON.parse(String(updateCall?.[1]?.body))).toMatchObject({
+      category: 'video_codec',
+      capability: 'hevc',
+      state: 'unsupported'
+    });
+    expect(view.textContent).toContain('Manual override');
+    expect(view.querySelector<HTMLSelectElement>('[data-device-capability]')?.value)
+      .toBe('deny');
+  });
+
   it('presents Auto as the recommended Silo playback policy', () => {
     const html = adminHtml('test-csrf');
     const qualityOptions = html.match(

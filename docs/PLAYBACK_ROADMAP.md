@@ -27,6 +27,14 @@ before its image is published.
   session keying/reuse, Silo start/replan validation, and structured summaries
 - Capability snapshot revisions included in playback keys so changed evidence
   cannot reuse a session created under an older policy input
+- Conservative positive capability learning from sustained direct and Silo
+  delivery, requiring three distinct clean playbacks before a trait becomes
+  trusted and applying a 90-day confidence half-life
+- Authenticated, pseudonymous **Devices** controls with authoritative Supported,
+  Unsupported, and Auto states for future playback planning
+- Automatic evidence limited to unambiguous video codec, container, 4K, and
+  plain HDR10 traits. Ambiguous failures, audio-track selection, Dolby Vision,
+  and HDR10+ base-layer behavior do not create automatic support claims
 
 ## Completed demand-aware pause/resume liveness foundation
 
@@ -182,9 +190,10 @@ the declared SDR target.
 - Poll only while the Activity view is open, while retaining a manual refresh
   control and responsive cards for smaller screens
 
-1. Capability learning rules with confidence thresholds and decay, followed by
-   task-focused admin controls for explicit device overrides
-2. Concurrency and transcoder-capacity controls
+1. Concurrency and transcoder-capacity controls
+2. Playback outcome reporting and carefully bounded negative evidence, only
+   where a future client signal can distinguish decoder incompatibility from
+   network, source, or transcoder failure
 
 ## Later interface work
 

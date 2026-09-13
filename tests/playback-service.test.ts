@@ -40,6 +40,13 @@ describe('playback orchestration', () => {
         session_id: 'session-1',
         playback_plan: {
           delivery: 'server_remux_hls',
+          effective_recipe: {
+            width: 1920,
+            height: 1080,
+            video_codec: 'hevc',
+            audio_codec: 'aac',
+            dynamic_range: 'sdr'
+          },
           stream: {
             url: '/playback/transcode/session-1/master.m3u8',
             protocol: 'hls',
@@ -98,7 +105,7 @@ describe('playback orchestration', () => {
       .toEqual(['h264', 'hevc']);
     expect(database.sqlite.prepare(
       'SELECT identity_source FROM playback_devices WHERE id=?'
-    ).get(deviceId)).toEqual({ identity_source: 'signed_stream_token' });
+    ).get(deviceId)).toEqual({ identity_source: 'explicit' });
     expect(logger.info).toHaveBeenCalledWith(
       expect.objectContaining({
         device_id: deviceId,
@@ -141,6 +148,17 @@ describe('playback orchestration', () => {
     expect(keepPlaybackAlive).not.toHaveBeenCalledWith(
       '/api/v1/stream/session-2'
     );
+
+    const segment =
+      '/api/v1/playback/transcode/session-1/segment/seg_00010.ts';
+    for (let index = 0; index < 15; index += 1) {
+      service.recordMediaResponse(segment, 100, 200);
+      now += 2_500;
+    }
+    expect(capabilities.getSnapshot(deviceId).capabilities[0]).toMatchObject({
+      evidence: 'user_override',
+      successCount: 1
+    });
     await service.close();
   });
 

@@ -24,6 +24,7 @@ import { deriveDeviceIdentity } from '../services/playback/device-identity.js';
 import { planSiloPlayback } from '../services/playback/playback-policy.js';
 import type { FallbackAddonService } from '../services/playback/fallback-addon.js';
 import type { NetworkProfileStore } from '../services/playback/network-profiles.js';
+import type { DeviceCapabilityStore } from '../services/playback/device-capabilities.js';
 
 const manifest = {
   id: 'community.nuviflow',
@@ -78,7 +79,8 @@ export function registerStremioRoutes(
   config: AppConfig,
   requester: RequestService,
   fallbackAddon: FallbackAddonService,
-  networkProfiles: NetworkProfileStore
+  networkProfiles: NetworkProfileStore,
+  deviceCapabilities: DeviceCapabilityStore
 ): void {
   const prefix = '/addon/:accessToken';
   const secureRoute = {
@@ -179,6 +181,10 @@ export function registerStremioRoutes(
       ip: request.ip,
       requestScope: request.id
     });
+    deviceCapabilities.touchDevice(
+      deviceIdentity.id,
+      deviceIdentity.source
+    );
 
     if (files.length === 0 && (type === 'movie' || type === 'series')) {
       // Queue acquisition independently: a working AIO fallback must never
@@ -290,7 +296,8 @@ export function registerStremioRoutes(
       const siloPolicy = planSiloPlayback(
         file,
         settings.siloTranscodeQuality,
-        deviceIdentity.id
+        deviceIdentity.id,
+        deviceCapabilities.getSnapshot(deviceIdentity.id)
       );
       const auto = siloPolicy.mode === 'auto-silo';
 
