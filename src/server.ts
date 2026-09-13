@@ -23,6 +23,7 @@ import { DeviceCapabilityStore } from './services/playback/device-capabilities.j
 import { PlaybackService } from './services/playback/playback-service.js';
 import { FallbackAddonService } from './services/playback/fallback-addon.js';
 import { NetworkProfileStore } from './services/playback/network-profiles.js';
+import { PlaybackActivityService } from './services/playback/playback-activity.js';
 import { RequestService } from './services/requester.js';
 import { SiloService } from './services/silo-service.js';
 import { SiloFileMappingStore } from './services/silo-file-mappings.js';
@@ -42,6 +43,7 @@ export interface BuiltApp {
   playback: PlaybackService;
   fallbackAddon: FallbackAddonService;
   networkProfiles: NetworkProfileStore;
+  playbackActivity: PlaybackActivityService;
 }
 
 export async function buildApp(config: AppConfig): Promise<BuiltApp> {
@@ -102,10 +104,15 @@ export async function buildApp(config: AppConfig): Promise<BuiltApp> {
     config.streamSecret,
     config.trustProxy
   );
+  const playbackActivity = new PlaybackActivityService(
+    playbackSessions,
+    fallbackAddon
+  );
   playback.setFallbackAddon(fallbackAddon);
 
   app.addHook('onClose', async () => {
     await playback.close();
+    playbackActivity.close();
     fallbackAddon.close();
   });
   if (!settings.adminPasswordHash) settings.set('adminPasswordHash', await hashPassword(config.adminPassword));
@@ -218,9 +225,21 @@ export async function buildApp(config: AppConfig): Promise<BuiltApp> {
     playback,
     silo,
     fallbackAddon,
-    networkProfiles
+    networkProfiles,
+    playbackActivity
   );
-  registerAdminRoutes(app, database, settings, scanner, tmdb, requester, config, silo, fallbackAddon);
+  registerAdminRoutes(
+    app,
+    database,
+    settings,
+    scanner,
+    tmdb,
+    requester,
+    config,
+    silo,
+    fallbackAddon,
+    playbackActivity
+  );
   app.setNotFoundHandler(async (_request, reply) => reply.code(404).send({ error: 'Not found' }));
   app.setErrorHandler(async (error, request, reply) => {
     request.log.error({ err: error }, 'Request failed');
@@ -240,6 +259,7 @@ export async function buildApp(config: AppConfig): Promise<BuiltApp> {
     deviceCapabilities,
     playback,
     fallbackAddon,
-    networkProfiles
+    networkProfiles,
+    playbackActivity
   };
 }

@@ -162,6 +162,26 @@ the declared SDR target.
 - Cleanup is idempotent and scoped by device, media file, profile, mode, and
   episode context; unrelated viewers and playback requests are never retired
 
+### Completed playback activity foundation
+
+- Add an authenticated **Activity** section to the admin dashboard for live and
+  briefly idle playback sessions
+- Cover all current delivery paths: direct local files, Silo original HTTP,
+  progressive remux, HLS remux, HLS transcode, and external AIO fallback
+- Show the selected route, source and target media characteristics, bounded
+  fallback state, AIO candidate attempt, pseudonymous device label, and short
+  playback trace ID
+- Derive Silo and AIO entries from their authoritative runtime registries, and
+  track direct byte-range transfers with a short process-local lease
+- Distinguish starting, streaming, and idle/paused activity using actual proxy
+  transfers and recent media requests; do not claim player state events that
+  Nuvio/Stremio does not provide
+- Keep activity ephemeral and read-only. Signed token IDs, raw device inputs,
+  file paths, upstream URLs, internal Silo session IDs, and credentials never
+  enter the admin response
+- Poll only while the Activity view is open, while retaining a manual refresh
+  control and responsive cards for smaller screens
+
 1. Capability learning rules with confidence thresholds and decay, followed by
    task-focused admin controls for explicit device overrides
 2. Concurrency and transcoder-capacity controls

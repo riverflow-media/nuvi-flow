@@ -215,6 +215,17 @@ describe('fallback addon service', () => {
     expect(first?.id).toBe(concurrent?.id);
     expect(reused?.id).toBe(first?.id);
     expect(otherNetwork?.id).not.toBe(first?.id);
+    const activity = service.activeSnapshot();
+    expect(activity[0]).toMatchObject({
+      mediaFileId: 'file-1',
+      mediaId: 'tt1234567',
+      mediaType: 'movie',
+      candidateAttempt: 1,
+      candidateCount: 1
+    });
+    expect(JSON.stringify(activity)).not.toContain('token=secret');
+    expect(JSON.stringify(activity)).not.toContain('upstreamUrl');
+    expect(JSON.stringify(activity)).not.toContain('requestHeaders');
     expect(logger.info).toHaveBeenCalledWith(
       expect.not.objectContaining({ upstreamUrl: expect.anything() }),
       'Fallback addon playback selected'

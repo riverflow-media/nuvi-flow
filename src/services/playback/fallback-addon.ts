@@ -74,6 +74,29 @@ export interface FallbackPlaybackSession {
   expiresAt: number;
   maximumExpiresAt: number;
   deviceId?: string;
+  mediaFileId?: string;
+  mediaId: string;
+  mediaType: 'movie' | 'series';
+  season: number | null;
+  episode: number | null;
+}
+
+export interface FallbackPlaybackActivity {
+  playbackId: string;
+  deviceId: string | null;
+  mediaFileId: string | null;
+  mediaId: string;
+  mediaType: 'movie' | 'series';
+  season: number | null;
+  episode: number | null;
+  resolutionHeight: number | null;
+  bitrateMbps: number | null;
+  candidateAttempt: number;
+  candidateCount: number;
+  candidateVerified: boolean;
+  createdAt: number;
+  lastAccess: number;
+  expiresAt: number;
 }
 
 export interface FallbackCandidate {
@@ -540,7 +563,12 @@ export class FallbackAddonService {
       lastAccess: now,
       expiresAt: Math.min(input.authorizationExpiresAt, now + SESSION_TTL_MS),
       maximumExpiresAt: input.authorizationExpiresAt,
-      deviceId: input.deviceId
+      deviceId: input.deviceId,
+      mediaFileId: input.file?.id,
+      mediaId,
+      mediaType: type,
+      season: input.episode?.season ?? null,
+      episode: input.episode?.episode ?? null
     };
     this.sessionsById.set(session.id, session);
     this.sessionIdsByKey.set(key, session.id);
@@ -571,6 +599,30 @@ export class FallbackAddonService {
     session.lastAccess = now;
     session.expiresAt = Math.min(session.maximumExpiresAt, now + SESSION_TTL_MS);
     return session;
+  }
+
+  activeSnapshot(): FallbackPlaybackActivity[] {
+    this.cleanupExpired();
+    return [...this.sessionsById.values()].map(session => {
+      const candidate = session.candidates[session.candidateIndex];
+      return {
+        playbackId: session.playbackId,
+        deviceId: session.deviceId ?? null,
+        mediaFileId: session.mediaFileId ?? null,
+        mediaId: session.mediaId,
+        mediaType: session.mediaType,
+        season: session.season,
+        episode: session.episode,
+        resolutionHeight: candidate?.resolutionHeight ?? null,
+        bitrateMbps: candidate?.bitrateMbps ?? null,
+        candidateAttempt: session.candidateIndex + 1,
+        candidateCount: session.candidates.length,
+        candidateVerified: session.candidateVerified,
+        createdAt: session.createdAt,
+        lastAccess: session.lastAccess,
+        expiresAt: session.expiresAt
+      };
+    });
   }
 
   async fetchMedia(session: FallbackPlaybackSession, init: RequestInit): Promise<Response> {

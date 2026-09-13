@@ -23,6 +23,10 @@ import type { TmdbService } from '../services/tmdb.js';
 import type { MetadataSearchResult } from '../services/tmdb.js';
 import { buildInfo } from '../lib/build-info.js';
 import type { FallbackAddonService } from '../services/playback/fallback-addon.js';
+import type {
+  PlaybackActivityRecord,
+  PlaybackActivityService
+} from '../services/playback/playback-activity.js';
 
 const COOKIE_NAME = 'nuviflow_admin';
 
@@ -118,6 +122,66 @@ function fileDetail(database: AppDatabase, id: string): Record<string, unknown> 
   return { ...publicFile(row), probe: parseJson(row.probe_json, {}), subtitles };
 }
 
+function publicPlaybackActivity(
+  activity: PlaybackActivityRecord,
+  file?: AdminMediaFileRow
+): Record<string, unknown> {
+  const directLike = [
+    'direct_file',
+    'original_http',
+    'server_remux_progressive',
+    'server_remux_hls'
+  ].includes(activity.route);
+  const source = file
+    ? {
+        kind: 'local',
+        quality: file.quality || null,
+        width: file.width,
+        height: file.height,
+        videoCodec: file.video_codec,
+        audioCodec: file.audio_codec
+      }
+    : {
+        kind: 'external',
+        quality: null,
+        width: null,
+        height: activity.target.height,
+        videoCodec: null,
+        audioCodec: null
+      };
+  const title = file
+    ? file.display_title || file.item_title || file.parsed_title || 'Unknown media'
+    : activity.mediaId || 'External media';
+
+  return {
+    playbackId: activity.playbackId,
+    title,
+    mediaType: activity.mediaType || file?.library_type || null,
+    season: activity.season,
+    episode: activity.episode,
+    deviceLabel: activity.deviceId
+      ? `Device ${activity.deviceId.slice(-8)}`
+      : 'Unknown device',
+    provider: activity.provider,
+    route: activity.route,
+    state: activity.state,
+    source,
+    target: {
+      ...activity.target,
+      quality: activity.target.quality || (directLike ? source.quality : null),
+      width: activity.target.width ?? (directLike ? source.width : null),
+      height: activity.target.height ?? (directLike ? source.height : null),
+      videoCodec: activity.target.videoCodec || (directLike ? source.videoCodec : null),
+      audioCodec: activity.target.audioCodec || (directLike ? source.audioCodec : null)
+    },
+    fallback: activity.fallback,
+    candidate: activity.candidate,
+    createdAt: activity.createdAt,
+    lastActivityAt: activity.lastActivityAt,
+    expiresAt: activity.expiresAt
+  };
+}
+
 function tmdbFailure(error: unknown, action: string): { status: number; message: string } {
   const detail = error instanceof Error ? error.message : '';
   if (/HTTP (401|403)/i.test(detail)) return { status: 400, message: 'The TMDB API key was rejected. Check the key in Settings and try again.' };
@@ -134,7 +198,8 @@ export function registerAdminRoutes(
   requester: RequestService,
   config: AppConfig,
   silo: SiloService,
-  fallbackAddon: FallbackAddonService
+  fallbackAddon: FallbackAddonService,
+  playbackActivity: PlaybackActivityService
 ): void {
   app.get('/admin/login', async (request, reply) => {
     if (sessionFor(request, config)) return reply.redirect('/admin');
@@ -176,6 +241,28 @@ export function registerAdminRoutes(
       started_at startedAt,finished_at finishedAt,message FROM scan_runs ORDER BY started_at DESC LIMIT 100`).all();
     const publicFiles = files.map(publicFile);
     return reply.header('Cache-Control', 'no-store').send({ counts, files: publicFiles, recent: publicFiles.slice(0, 12), logs, settings: settings.publicView(), build: buildInfo(), scanning: scanner.isRunning() });
+  });
+
+  app.get('/admin/api/activity', {
+    preHandler: requireAdmin(config)
+  }, async (_request, reply) => {
+    const activity = await playbackActivity.snapshot();
+    const fileById = new Map<string, AdminMediaFileRow>();
+    const selectFile = database.sqlite.prepare(`${adminFileSelect} WHERE mf.id=?`);
+
+    for (const entry of activity) {
+      if (!entry.mediaFileId || fileById.has(entry.mediaFileId)) continue;
+      const file = selectFile.get(entry.mediaFileId) as AdminMediaFileRow | undefined;
+      if (file) fileById.set(entry.mediaFileId, file);
+    }
+
+    return reply.header('Cache-Control', 'no-store').send({
+      activity: activity.map(entry => publicPlaybackActivity(
+        entry,
+        entry.mediaFileId ? fileById.get(entry.mediaFileId) : undefined
+      )),
+      generatedAt: Date.now()
+    });
   });
 
   app.post('/admin/api/addon-access/regenerate', {

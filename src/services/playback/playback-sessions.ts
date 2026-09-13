@@ -34,7 +34,16 @@ export interface PlaybackSessionStart {
   siloFileId: number;
   upstreamPath: string;
   delivery: string;
+  planSummary?: PlaybackPlanSummary;
   runtimeFallback?: PlaybackRuntimeFallback;
+}
+
+export interface PlaybackPlanSummary {
+  width: number | null;
+  height: number | null;
+  videoCodec: string | null;
+  audioCodec: string | null;
+  dynamicRange: string | null;
 }
 
 export interface PlaybackSession extends PlaybackSessionStart {
@@ -510,6 +519,17 @@ export class PlaybackSessionRegistry {
     }
     session.upstreamPath = result.upstreamPath;
     session.delivery = result.delivery;
+    session.planSummary = {
+      width: typeof result.plan.effective_recipe?.width === 'number'
+        ? result.plan.effective_recipe.width
+        : null,
+      height: typeof result.plan.effective_recipe?.height === 'number'
+        ? result.plan.effective_recipe.height
+        : null,
+      videoCodec: result.plan.effective_recipe?.video_codec || null,
+      audioCodec: result.plan.effective_recipe?.audio_codec || null,
+      dynamicRange: result.plan.effective_recipe?.dynamic_range || null
+    };
     if (result.siloSessionId) session.siloSessionId = result.siloSessionId;
     session.runtimeFallback.plan = result.plan;
     session.runtimeFallback.state = 'completed';
@@ -551,6 +571,20 @@ export class PlaybackSessionRegistry {
   async activeSnapshot(): Promise<PlaybackSession[]> {
     await this.cleanupExpired();
     return [...this.activeSessions.values()].map(session => ({ ...session }));
+  }
+
+  playbackIdForUpstreamPath(pathname: string): string | null {
+    const requestedRoot = playbackTransportRoot(pathname);
+    if (!requestedRoot) return null;
+
+    for (const session of this.activeSessions.values()) {
+      if (session.expiresAt <= this.now()) continue;
+      const roots = [session.upstreamPath, ...session.pathAliases]
+        .map(playbackTransportRoot);
+      if (roots.includes(requestedRoot)) return session.playbackId;
+    }
+
+    return null;
   }
 
   counts(): { pending: number; active: number } {

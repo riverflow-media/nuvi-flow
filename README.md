@@ -88,6 +88,11 @@ The current integration provides:
   two seconds or more produce one structured summary at controlled intervals,
   providing the evidence needed for bounded quality fallback without log floods
 - A unique Nuvi-Flow playback ID in structured session logs and the `X-Nuvi-Flow-Playback-Id` response header
+- A password-protected **Activity** view showing current and briefly idle direct,
+  Silo, and fallback-addon streams, including the route Auto selected, source
+  and target media details, fallback state, and a short playback trace ID. The
+  view never returns file paths, upstream URLs, signed token IDs, internal Silo
+  session IDs, or credentials
 - An optional private Stremio-compatible fallback addon. Auto can use it when
   local media is missing, before a likely full video transcode, or when a
   reliable short-lived observation indicates that the current device/network
@@ -295,6 +300,8 @@ Uploaded branding is stored in the persistent `/app/data` volume.
 The password-protected dashboard provides:
 
 - Library overview
+- Live playback activity across direct, Silo original/remux/transcode, and AIO
+  fallback routes
 - Recently added media
 - Files needing review
 - Manual metadata matching

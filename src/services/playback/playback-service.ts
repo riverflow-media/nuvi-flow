@@ -480,6 +480,13 @@ export class PlaybackService {
           siloFileId: fileId,
           upstreamPath: '/api/v1' + plan.stream.url,
           delivery: plan.delivery,
+          planSummary: {
+            width: plan.effective_recipe?.width || null,
+            height: plan.effective_recipe?.height || null,
+            videoCodec: plan.effective_recipe?.video_codec || null,
+            audioCodec: plan.effective_recipe?.audio_codec || null,
+            dynamicRange: plan.effective_recipe?.dynamic_range || null
+          },
           runtimeFallback: targetQuality ? {
             profileId: input.profileId,
             playbackAttemptId: started.playbackAttemptId,

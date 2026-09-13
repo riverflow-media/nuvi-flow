@@ -4,6 +4,7 @@ import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { loadConfig } from '../src/config.js';
 import { buildApp, type BuiltApp } from '../src/server.js';
+import type { MediaFileRow } from '../src/types.js';
 
 describe('admin media detail API', () => {
   let built: BuiltApp;
@@ -78,6 +79,52 @@ describe('admin media detail API', () => {
       method: 'GET',
       url: `${newPath}/manifest.json`
     })).statusCode).toBe(200);
+  });
+
+  it('returns sanitized live playback activity to authenticated admins', async () => {
+    const file = built.database.sqlite.prepare(
+      'SELECT * FROM media_files WHERE id=?'
+    ).get('file1') as MediaFileRow;
+    const transfer = built.playbackActivity.beginDirect({
+      requestScope: 'private-stream-token-id',
+      deviceId: 'device_1234567890abcdef12345678',
+      file,
+      authorizationExpiresAt: Date.now() + 60_000
+    });
+
+    const unauthorized = await built.app.inject({
+      method: 'GET',
+      url: '/admin/api/activity'
+    });
+    expect(unauthorized.statusCode).toBe(401);
+
+    const response = await request('GET', '/admin/api/activity');
+    expect(response.statusCode).toBe(200);
+    expect(response.json().activity).toMatchObject([{
+      playbackId: transfer.playbackId,
+      title: 'Example Movie',
+      mediaType: 'movie',
+      deviceLabel: 'Device 12345678',
+      provider: 'nuvi-flow',
+      route: 'direct_file',
+      state: 'streaming',
+      source: {
+        kind: 'local',
+        height: 1080,
+        videoCodec: 'h264',
+        audioCodec: 'aac'
+      },
+      target: {
+        height: 1080,
+        videoCodec: 'h264',
+        audioCodec: 'aac'
+      }
+    }]);
+    expect(response.body).not.toContain('private-stream-token-id');
+    expect(response.body).not.toContain(file.absolute_path);
+    expect(response.body).not.toContain('upstream');
+
+    transfer.finish();
   });
 
   it('tests Silo through the application Silo service', async () => {

@@ -318,7 +318,20 @@ describe('Stremio and media HTTP endpoints', () => {
     expect(valid.headers['accept-ranges']).toBe('bytes');
     expect(valid.headers['content-range']).toBe('bytes 10-19/36');
     expect(valid.headers['content-length']).toBe('10');
+    expect(valid.headers['x-nuvi-flow-playback-id']).toMatch(
+      /^[0-9a-f-]{36}$/
+    );
     expect(valid.body).toBe('abcdefghij');
+    expect(await built.playbackActivity.snapshot()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          playbackId: valid.headers['x-nuvi-flow-playback-id'],
+          mediaFileId: 'file1',
+          provider: 'nuvi-flow',
+          route: 'direct_file'
+        })
+      ])
+    );
     const invalid = await built.app.inject({ method: 'GET', url: `/media/${encodeURIComponent(token())}`, headers: { range: 'bytes=100-' } });
     expect(invalid.statusCode).toBe(416);
     expect(invalid.headers['content-range']).toBe('bytes */36');

@@ -400,6 +400,13 @@ describe('PlaybackSessionRegistry', () => {
         stream: {
           url: '/playback/transcode/silo-session-b/master.m3u8',
           protocol: 'hls', headers: {}, header_refresh: 'none'
+        },
+        effective_recipe: {
+          width: 1920,
+          height: 1080,
+          video_codec: 'h264',
+          audio_codec: 'aac',
+          dynamic_range: 'sdr'
         }
       },
       upstreamPath: '/api/v1/playback/transcode/silo-session-b/master.m3u8',
@@ -412,6 +419,13 @@ describe('PlaybackSessionRegistry', () => {
     expect(registry.resolveUpstreamPath(segment)).toBe(
       '/api/v1/playback/transcode/silo-session-b/segment/seg_00001.ts'
     );
+    expect((await registry.activeSnapshot())[0]?.planSummary).toEqual({
+      width: 1920,
+      height: 1080,
+      videoCodec: 'h264',
+      audioCodec: 'aac',
+      dynamicRange: 'sdr'
+    });
     await registry.close();
   });
 

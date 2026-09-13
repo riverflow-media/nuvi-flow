@@ -47,7 +47,10 @@ async function flush(): Promise<void> {
   for (let index = 0; index < 30; index += 1) await Promise.resolve();
 }
 
-function install(fetchMock: ReturnType<typeof vi.fn>): void {
+function install(
+  fetchMock: ReturnType<typeof vi.fn>,
+  activity: unknown[] = []
+): void {
   document.open();
   document.write(adminHtml('test-csrf').replace(/<script>[\s\S]*<\/script>/, ''));
   document.close();
@@ -58,6 +61,9 @@ function install(fetchMock: ReturnType<typeof vi.fn>): void {
   ) => {
     if (String(input) === '/admin/api/requests') {
       return json({ requests: [] });
+    }
+    if (String(input) === '/admin/api/activity') {
+      return json({ activity, generatedAt: Date.now() });
     }
 
     return fetchMock(input, init);
@@ -110,6 +116,51 @@ describe('media details modal', () => {
       .toBeNull();
     expect((document.querySelector('#manifestUrl') as HTMLInputElement).value)
       .toBe('http://localhost:60500/addon/test-secure-install-token/manifest.json');
+  });
+
+  it('shows live playback decisions in the Activity section', async () => {
+    const fetchMock = vi.fn(async (input: string | URL | Request) => {
+      if (String(input) === '/admin/api/state') return json(appState());
+      return json({ error: 'Unexpected request' }, 500);
+    });
+    install(fetchMock, [{
+      playbackId: 'playback-123456789',
+      title: 'Example Movie',
+      mediaType: 'movie',
+      season: null,
+      episode: null,
+      deviceLabel: 'Device 12345678',
+      provider: 'silo',
+      route: 'server_transcode_hls',
+      state: 'streaming',
+      source: {
+        kind: 'local', height: 2160, videoCodec: 'hevc', audioCodec: 'truehd'
+      },
+      target: {
+        height: 1080, videoCodec: 'h264', audioCodec: 'aac', dynamicRange: 'sdr'
+      },
+      fallback: {
+        state: 'completed', reason: 'slow_segments', targetQuality: '1080p-high'
+      },
+      candidate: null,
+      createdAt: Date.now() - 30_000,
+      lastActivityAt: Date.now(),
+      expiresAt: Date.now() + 60_000
+    }]);
+    await flush();
+
+    document.querySelector<HTMLButtonElement>('[data-view="activity"]')!.click();
+    await flush();
+
+    const view = document.querySelector('#activity')!;
+    expect(view.classList.contains('active')).toBe(true);
+    expect(view.textContent).toContain('Example Movie');
+    expect(view.textContent).toContain('Silo transcode');
+    expect(view.textContent).toContain('2160p · HEVC · TRUEHD');
+    expect(view.textContent).toContain('1080p · H264 · AAC · SDR');
+    expect(view.textContent).toContain('Quality fallback applied · 1080p-high');
+    expect(view.textContent).toContain('Playback playback');
+    expect(view.textContent).not.toContain('silo-session');
   });
 
   it('presents Auto as the recommended Silo playback policy', () => {

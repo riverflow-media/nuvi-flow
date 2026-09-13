@@ -198,6 +198,7 @@ export function registerStremioRoutes(
           mediaId: id,
           deviceId: deviceIdentity.id,
           authorizationExpiresAt: expiry,
+          episode: requestedEpisode,
           networkEstimateMbps: estimate,
           networkContextId: networkProfiles.context(deviceIdentity.id, request.ip).id
         });
