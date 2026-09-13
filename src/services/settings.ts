@@ -149,6 +149,37 @@ export class SettingsService {
     return this.boolean('showDirectPlay', this.defaults.showDirectPlay);
   }
 
+  get siloRuntimeFallbackEnabled(): boolean {
+    return this.boolean(
+      'siloRuntimeFallbackEnabled',
+      this.defaults.siloRuntimeFallbackEnabled
+    );
+  }
+
+  get siloRuntimeFallbackSlowSegmentMs(): number {
+    return Math.min(15_000, Math.floor(this.number(
+      'siloRuntimeFallbackSlowSegmentMs',
+      this.defaults.siloRuntimeFallbackSlowSegmentMs,
+      1000
+    )));
+  }
+
+  get siloRuntimeFallbackSlowSegmentCount(): number {
+    return Math.min(10, Math.floor(this.number(
+      'siloRuntimeFallbackSlowSegmentCount',
+      this.defaults.siloRuntimeFallbackSlowSegmentCount,
+      2
+    )));
+  }
+
+  get siloRuntimeFallbackStartupMs(): number {
+    return Math.min(60_000, Math.floor(this.number(
+      'siloRuntimeFallbackStartupMs',
+      this.defaults.siloRuntimeFallbackStartupMs,
+      5000
+    )));
+  }
+
   get fallbackAddonEnabled(): boolean {
     return this.boolean(
       'fallbackAddonEnabled',
@@ -269,6 +300,10 @@ export class SettingsService {
       siloConfigured: Boolean(this.siloApiKey),
       siloProfileId: this.siloProfileId,
       siloTranscodeQuality: this.siloTranscodeQuality,
+      siloRuntimeFallbackEnabled: this.siloRuntimeFallbackEnabled,
+      siloRuntimeFallbackSlowSegmentMs: this.siloRuntimeFallbackSlowSegmentMs,
+      siloRuntimeFallbackSlowSegmentCount: this.siloRuntimeFallbackSlowSegmentCount,
+      siloRuntimeFallbackStartupMs: this.siloRuntimeFallbackStartupMs,
       showDirectPlay: this.showDirectPlay,
       fallbackAddonEnabled: this.fallbackAddonEnabled,
       fallbackAddonConfigured: Boolean(this.fallbackAddonManifestUrl),

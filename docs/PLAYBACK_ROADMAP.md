@@ -137,13 +137,34 @@ the declared SDR target.
   preventing one slow connection from permanently downgrading a device
 - The additive SQLite table uses the verified pre-migration backup path
 
-1. Runtime fallback using measured manifest/segment response time, repeated slow
-   segment counts, status failures, and startup latency. Silo does not currently
-   expose encoder FPS/GPU utilization through protocol v3, so fallback must use
-   observable proxy evidence and perform at most one quality replan
-2. Capability learning rules with confidence thresholds and decay, followed by
+### Completed bounded runtime quality fallback
+
+- Auto HLS transcodes use observable startup latency, consecutive slow segment
+  header waits, and repeated upstream failures; no encoder FPS or GPU metric is
+  invented when protocol v3 does not provide one
+- Silo-advertised quality rungs determine one materially cheaper replan: a
+  struggling 4K plan prefers 1080p-high, while 1080p prefers 1080p-medium when
+  those rungs are available
+- HLS media-sequence and segment-duration data provide an approximate source
+  position so the replan resumes near the active segment
+- The replan is single-flight and capped at one attempt per playback session;
+  successful, failed, and unavailable fallbacks cannot create retry loops
+- Existing signed tokens resolve to the replacement session path, keeping
+  manifest refresh and subsequent segment requests behind Nuvi-Flow
+- Thresholds and the feature toggle are configurable in the admin dashboard;
+  fixed-quality requests, original HTTP, remux, and fallback-addon playback are
+  unchanged
+- A successful AIO selection retires the exact matching Silo session before the
+  fallback response is returned. Replaced, expired, and shutdown sessions use
+  the same authenticated cleanup path
+- Pending starts and in-flight replans are generation-fenced, so a late Silo
+  result is stopped rather than leaving an obsolete FFmpeg workload running
+- Cleanup is idempotent and scoped by device, media file, profile, mode, and
+  episode context; unrelated viewers and playback requests are never retired
+
+1. Capability learning rules with confidence thresholds and decay, followed by
    task-focused admin controls for explicit device overrides
-3. Concurrency and transcoder-capacity controls
+2. Concurrency and transcoder-capacity controls
 
 ## Later interface work
 

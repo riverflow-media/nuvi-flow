@@ -45,6 +45,58 @@ function resolveSiloMediaPath(
   return resolved.pathname + resolved.search;
 }
 
+export interface HlsSegmentTimelineEntry {
+  path: string;
+  positionSeconds: number;
+}
+
+/**
+ * Extracts an approximate source position for each media segment. The mapping
+ * is used only to preserve position during a bounded quality replan; it is not
+ * persisted or treated as watch history.
+ */
+export function parseHlsSegmentTimeline(
+  manifest: string,
+  sourcePath: string,
+  siloBaseUrl: string,
+  sourceStartSeconds = 0
+): HlsSegmentTimelineEntry[] {
+  const lines = manifest.split('\n');
+  const mediaSequence = Number(lines.find(line =>
+    line.trim().startsWith('#EXT-X-MEDIA-SEQUENCE:')
+  )?.split(':', 2)[1] || 0);
+  const targetDuration = Number(lines.find(line =>
+    line.trim().startsWith('#EXT-X-TARGETDURATION:')
+  )?.split(':', 2)[1] || 0);
+  let position = Math.max(0, sourceStartSeconds) + (
+    Number.isFinite(mediaSequence) && mediaSequence > 0 &&
+    Number.isFinite(targetDuration) && targetDuration > 0
+      ? mediaSequence * targetDuration
+      : 0
+  );
+  let duration = 0;
+  const entries: HlsSegmentTimelineEntry[] = [];
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (trimmed.startsWith('#EXTINF:')) {
+      const parsed = Number.parseFloat(trimmed.slice('#EXTINF:'.length));
+      duration = Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
+      continue;
+    }
+    if (!trimmed || trimmed.startsWith('#')) continue;
+    if (!duration) continue;
+    entries.push({
+      path: resolveSiloMediaPath(trimmed, sourcePath, siloBaseUrl),
+      positionSeconds: position
+    });
+    position += duration;
+    duration = 0;
+  }
+
+  return entries;
+}
+
 function rewriteReference(
   reference: string,
   sourcePath: string,

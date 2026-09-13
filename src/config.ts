@@ -40,6 +40,10 @@ export interface AppConfig {
   siloApiKey: string;
   siloProfileId: string;
   siloTranscodeQuality: string;
+  siloRuntimeFallbackEnabled: boolean;
+  siloRuntimeFallbackSlowSegmentMs: number;
+  siloRuntimeFallbackSlowSegmentCount: number;
+  siloRuntimeFallbackStartupMs: number;
   showDirectPlay: boolean;
   fallbackAddonEnabled: boolean;
   fallbackAddonManifestUrl: string;
@@ -115,6 +119,22 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     siloProfileId: env.SILO_PROFILE_ID?.trim() || '',
     siloTranscodeQuality:
       env.SILO_TRANSCODE_QUALITY?.trim() || 'auto',
+    siloRuntimeFallbackEnabled: booleanValue(env.SILO_RUNTIME_FALLBACK_ENABLED, true),
+    siloRuntimeFallbackSlowSegmentMs: Math.floor(numberValue(
+      env.SILO_RUNTIME_FALLBACK_SLOW_SEGMENT_MS,
+      2500,
+      1000
+    )),
+    siloRuntimeFallbackSlowSegmentCount: Math.floor(numberValue(
+      env.SILO_RUNTIME_FALLBACK_SLOW_SEGMENT_COUNT,
+      3,
+      2
+    )),
+    siloRuntimeFallbackStartupMs: Math.floor(numberValue(
+      env.SILO_RUNTIME_FALLBACK_STARTUP_MS,
+      20_000,
+      5000
+    )),
     showDirectPlay: booleanValue(env.SHOW_DIRECT_PLAY, true),
     fallbackAddonEnabled: booleanValue(env.FALLBACK_ADDON_ENABLED, false),
     fallbackAddonManifestUrl: env.FALLBACK_ADDON_MANIFEST_URL?.trim() || '',

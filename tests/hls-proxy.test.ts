@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   HlsManifestError,
   isHlsManifestPath,
+  parseHlsSegmentTimeline,
   readHlsManifest,
   rewriteHlsManifest
 } from '../src/services/playback/hls-proxy.js';
@@ -54,6 +55,29 @@ describe('HLS proxy helpers', () => {
       baseUrl,
       proxy
     )).toThrow(HlsManifestError);
+  });
+
+  it('maps media segments to approximate source positions for replanning', () => {
+    const entries = parseHlsSegmentTimeline([
+      '#EXTM3U',
+      '#EXT-X-TARGETDURATION:2',
+      '#EXT-X-MEDIA-SEQUENCE:4',
+      '#EXTINF:2.0,',
+      'segment/seg_00004.ts',
+      '#EXTINF:1.5,',
+      'segment/seg_00005.ts?generation=2'
+    ].join('\n'), source, baseUrl, 10);
+
+    expect(entries).toEqual([
+      {
+        path: '/api/v1/playback/transcode/session-1/segment/seg_00004.ts',
+        positionSeconds: 18
+      },
+      {
+        path: '/api/v1/playback/transcode/session-1/segment/seg_00005.ts?generation=2',
+        positionSeconds: 20
+      }
+    ]);
   });
 
   it('bounds buffered manifest text', async () => {

@@ -143,6 +143,33 @@ describe('admin media detail API', () => {
     expect(shown.json().settings.showDirectPlay).toBe(true);
   });
 
+  it('validates and persists bounded runtime fallback controls', async () => {
+    const currentSettings = Object.fromEntries(
+      Object.entries(built.settings.publicView())
+        .map(([key, value]) => [key, String(value)])
+    );
+    const saved = await request('PUT', '/admin/api/settings', {
+      ...currentSettings,
+      siloRuntimeFallbackEnabled: 'false',
+      siloRuntimeFallbackSlowSegmentMs: '3250',
+      siloRuntimeFallbackSlowSegmentCount: '4',
+      siloRuntimeFallbackStartupMs: '25000'
+    });
+    expect(saved.statusCode).toBe(200);
+    expect(saved.json().settings).toMatchObject({
+      siloRuntimeFallbackEnabled: false,
+      siloRuntimeFallbackSlowSegmentMs: 3250,
+      siloRuntimeFallbackSlowSegmentCount: 4,
+      siloRuntimeFallbackStartupMs: 25000
+    });
+
+    const invalid = await request('PUT', '/admin/api/settings', {
+      ...currentSettings,
+      siloRuntimeFallbackSlowSegmentCount: '1'
+    });
+    expect(invalid.statusCode).toBe(400);
+  });
+
   it('validates and stores a private fallback addon manifest without returning it', async () => {
     const testConnection = vi.spyOn(built.fallbackAddon, 'testConnection')
       .mockResolvedValue({

@@ -86,7 +86,15 @@ export async function buildApp(config: AppConfig): Promise<BuiltApp> {
     silo,
     playbackSessions,
     deviceCapabilities,
-    app.log
+    app.log,
+    {
+      runtimeFallback: {
+        enabled: () => settings.siloRuntimeFallbackEnabled,
+        slowSegmentMs: () => settings.siloRuntimeFallbackSlowSegmentMs,
+        slowSegmentCount: () => settings.siloRuntimeFallbackSlowSegmentCount,
+        startupMs: () => settings.siloRuntimeFallbackStartupMs
+      }
+    }
   );
   const fallbackAddon = new FallbackAddonService(settings, app.log);
   const networkProfiles = new NetworkProfileStore(
@@ -97,8 +105,7 @@ export async function buildApp(config: AppConfig): Promise<BuiltApp> {
   playback.setFallbackAddon(fallbackAddon);
 
   app.addHook('onClose', async () => {
-    playback.close();
-    playbackSessions.close();
+    await playback.close();
     fallbackAddon.close();
   });
   if (!settings.adminPasswordHash) settings.set('adminPasswordHash', await hashPassword(config.adminPassword));

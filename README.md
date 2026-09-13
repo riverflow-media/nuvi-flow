@@ -113,6 +113,14 @@ before any bytes are sent to the player, Nuvi-Flow advances within a bounded
 15-second budget and keeps the first working candidate sticky for later range
 and seek requests.
 
+Once a safe fallback candidate is selected, Nuvi-Flow retires the matching
+Silo playback session before returning the fallback stream. The same
+authenticated, idempotent cleanup runs when a Silo replan replaces a session,
+when a local session expires, and during graceful shutdown. Pending Silo starts
+are fenced as well: if one finishes after AIO has won, its newly created session
+is stopped instead of becoming an orphaned FFmpeg workload. Cleanup uses only
+the exact server-side session ID and never exposes the Silo API key.
+
 Nuvi-Flow requests AIOStreams' extended stream metadata using its documented
 client identity header. When AIOStreams or the upstream response supplies a file size and the local
 media runtime is known, Nuvi-Flow also performs a one-time startup probe of up
@@ -134,6 +142,14 @@ permanent device capability. Raw IP addresses and private addon URLs are not
 stored. If the reverse proxy does not supply a trustworthy client address,
 Nuvi-Flow does not use the observation to reject local direct playback.
 
+Auto Silo transcodes also have one bounded runtime quality fallback. A slow
+startup, repeated slow segment header waits, or consecutive upstream failures
+can move a struggling 4K transcode to an available 1080p rung (or reduce a
+struggling 1080p rung) without an endless restart loop. Nuvi-Flow derives an
+approximate source position from the HLS media playlist so Silo can replan near
+the active segment. This per-session signal expires with the session and never
+becomes permanent device capability evidence.
+
 This foundation selects and probes the fallback before a predicted video
 conversion; it does not replace a stream after playback has already started.
 The addon protocol does not provide Nuvi-Flow with a reliable player position
@@ -154,14 +170,13 @@ Auto does not send a bandwidth estimate when none is known. It offers the
 scanned source container and primary codecs to the original route first, while
 progressive/HLS conversion retains conservative compatibility targets. Explicit
 supported overrides can widen those targets, but automatic learning and its
-admin controls are not enabled yet. Known-compatible HDR preservation and
-automatic runtime fallback remain later milestones.
+admin controls are not enabled yet. Known-compatible HDR preservation remains
+a later milestone.
 
 Streaming removes Nuvi-Flow's previous segment-sized startup delay and memory
-buffer. Nuvi-Flow now measures upstream response latency and repeated slow
-segment delivery, but it does not yet receive encoder FPS or GPU utilization
-from Silo protocol v3. Turning those observations into one bounded replan is the
-next playback milestone.
+buffer. Silo protocol v3 does not currently provide encoder FPS or GPU
+utilization, so the bounded runtime replan uses only response evidence visible
+to Nuvi-Flow and performs at most once per playback session.
 
 New installations default to Auto. An existing saved fixed quality remains an
 intentional override after upgrading; select **Auto** under **Settings → Silo**
@@ -511,6 +526,10 @@ Common environment variables include:
 | `SILO_API_KEY` | Silo API key; never returned to the browser |
 | `SILO_PROFILE_ID` | Silo playback profile ID |
 | `SILO_TRANSCODE_QUALITY` | Silo quality policy; `auto` (default) preserves source resolution when viable, while a named rung is a fixed override |
+| `SILO_RUNTIME_FALLBACK_ENABLED` | Allow one evidence-triggered quality replan for a struggling Auto HLS transcode; default `true` |
+| `SILO_RUNTIME_FALLBACK_SLOW_SEGMENT_MS` | Segment header wait considered slow, 1,000–15,000 ms; default `2500` |
+| `SILO_RUNTIME_FALLBACK_SLOW_SEGMENT_COUNT` | Consecutive slow segments required, 2–10; default `3` |
+| `SILO_RUNTIME_FALLBACK_STARTUP_MS` | Startup time that triggers the one lower-rung replan, 5,000–60,000 ms; default `20000` |
 | `SHOW_DIRECT_PLAY` | Show a separate original-file Direct entry when Silo is available; default `true` |
 | `FALLBACK_ADDON_ENABLED` | Enable the optional pre-transcode fallback addon; default `false` |
 | `FALLBACK_ADDON_MANIFEST_URL` | Private installed manifest URL for AIOStreams or another Stremio-compatible stream addon; never returned to the browser |

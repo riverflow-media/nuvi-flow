@@ -22,6 +22,7 @@ import {
 import {
   HlsManifestError,
   isHlsManifestPath,
+  parseHlsSegmentTimeline,
   readHlsManifest,
   rewriteHlsManifest
 } from '../services/playback/hls-proxy.js';
@@ -418,7 +419,8 @@ async function serveSiloMedia(
       });
   }
 
-  playback.touchMediaPath(payload.path);
+  const upstreamPath = playback.resolveMediaPath(payload.path);
+  playback.touchMediaPath(upstreamPath);
 
   const upstreamHeaders = new Headers();
 
@@ -436,18 +438,18 @@ async function serveSiloMedia(
   const upstreamStartedAt = Date.now();
 
   try {
-    response = await silo.fetchMedia(payload.path, {
+    response = await silo.fetchMedia(upstreamPath, {
       method: request.method,
       headers: upstreamHeaders
     });
     playback.recordMediaResponse(
-      payload.path,
+      upstreamPath,
       Date.now() - upstreamStartedAt,
       response.status
     );
   } catch {
     playback.recordMediaResponse(
-      payload.path,
+      upstreamPath,
       Date.now() - upstreamStartedAt,
       0
     );
@@ -501,13 +503,13 @@ async function serveSiloMedia(
     response.headers.get('content-type') ||
     'application/octet-stream';
 
-  const manifestResponse = isHlsManifestPath(payload.path);
+  const manifestResponse = isHlsManifestPath(upstreamPath);
 
   if (manifestResponse) {
     contentType =
       'application/vnd.apple.mpegurl';
   } else if (
-    new URL(payload.path, 'http://silo.invalid')
+    new URL(upstreamPath, 'http://silo.invalid')
       .pathname.endsWith('.ts')
   ) {
     contentType = 'video/mp2t';
@@ -528,9 +530,15 @@ async function serveSiloMedia(
   if (manifestResponse) {
     try {
       const manifest = await readHlsManifest(response);
+      playback.recordManifest(parseHlsSegmentTimeline(
+        manifest,
+        upstreamPath,
+        settings.siloUrl,
+        playback.mediaSourceStartSeconds(upstreamPath)
+      ));
       const rewritten = rewriteHlsManifest(
         manifest,
-        payload.path,
+        upstreamPath,
         settings.siloUrl,
         siloPath => {
           const { token } = createSiloMediaToken(

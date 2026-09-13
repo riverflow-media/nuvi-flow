@@ -616,6 +616,9 @@ export function registerAdminRoutes(
       ['scanIntervalMinutes', 1],
       ['minimumFileSizeMb', 0],
       ['streamTokenExpiryHours', 1],
+      ['siloRuntimeFallbackSlowSegmentMs', 1000],
+      ['siloRuntimeFallbackSlowSegmentCount', 2],
+      ['siloRuntimeFallbackStartupMs', 5000],
       ['fallbackAddonTimeoutMs', 1000],
       ['fallbackAddonMaxAttempts', 1],
       ['fallbackAddonStartupBudgetMs', 5000],
@@ -658,6 +661,7 @@ export function registerAdminRoutes(
       'sonarrSeparateAnimeRoot',
       'sonarrMonitorWholeSeries',
       'siloEnabled',
+      'siloRuntimeFallbackEnabled',
       'showDirectPlay',
       'fallbackAddonEnabled',
       'fallbackAddonUseForMissing',
@@ -758,6 +762,19 @@ export function registerAdminRoutes(
     }
 
     // Silo playback options.
+    const boundedRuntimeFallbackNumbers: Array<[string, number, number]> = [
+      ['siloRuntimeFallbackSlowSegmentMs', 1000, 15_000],
+      ['siloRuntimeFallbackSlowSegmentCount', 2, 10],
+      ['siloRuntimeFallbackStartupMs', 5000, 60_000]
+    ];
+    for (const [key, minimum, maximum] of boundedRuntimeFallbackNumbers) {
+      const value = Number(body[key]);
+      if (!Number.isInteger(value) || value < minimum || value > maximum) {
+        return reply.code(400).send({ error: `${key} is invalid` });
+      }
+      settings.set(key, String(value));
+    }
+
     if (typeof body.siloProfileId === 'string') {
       settings.set(
         'siloProfileId',

@@ -126,6 +126,9 @@ describe('media details modal', () => {
     expect(qualityOptions.match(/recommended/g)).toHaveLength(1);
     expect(html).toContain('lets Silo choose original playback');
     expect(html).toContain('Separate Direct Play option');
+    expect(html).toContain('Runtime quality fallback');
+    expect(html).toContain('Slow segment threshold');
+    expect(html).toContain('position-preserving quality reduction');
     expect(html).toContain('Missing local media');
     expect(html).toContain('Maximum candidates');
     expect(html).toContain('Network adaptation');

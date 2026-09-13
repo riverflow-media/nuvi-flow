@@ -448,6 +448,27 @@ export class SiloClient {
     );
   }
 
+  async stopPlayback(sessionId: string): Promise<boolean> {
+    const response = await this.fetchMedia(
+      `/api/v1/playback/${encodeURIComponent(sessionId)}`,
+      {
+        method: 'DELETE',
+        signal: AbortSignal.timeout(5_000)
+      }
+    );
+    await response.body?.cancel();
+
+    if (response.status === 404) return false;
+    if (!response.ok) {
+      throw new SiloApiError(
+        `Silo returned HTTP ${response.status}.`,
+        response.status
+      );
+    }
+
+    return true;
+  }
+
   replanPlaybackQuality(
     sessionId: string,
     profileId: string,

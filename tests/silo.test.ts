@@ -19,6 +19,48 @@ afterEach(() => {
 });
 
 describe('Silo integration', () => {
+  it.each([
+    [204, true],
+    [404, false]
+  ])('stops playback with authenticated DELETE for HTTP %s', async (
+    status,
+    expected
+  ) => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(null, { status }));
+    vi.stubGlobal('fetch', fetchMock);
+    const client = new SiloClient(
+      'http://silo:8080',
+      'super-secret-test-key'
+    );
+
+    await expect(client.stopPlayback('session/a')).resolves.toBe(expected);
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe('http://silo:8080/api/v1/playback/session%2Fa');
+    expect(init.method).toBe('DELETE');
+    expect(new Headers(init.headers).get('Authorization'))
+      .toBe('Bearer super-secret-test-key');
+  });
+
+  it('normalizes Silo playback-stop failures without exposing credentials', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(new Response(null, { status: 503 }))
+    );
+    const client = new SiloClient(
+      'http://silo:8080',
+      'super-secret-test-key'
+    );
+
+    await expect(client.stopPlayback('session-a')).rejects.toMatchObject({
+      name: 'SiloApiError',
+      message: 'Silo returned HTTP 503.',
+      status: 503
+    });
+    await expect(client.stopPlayback('session-a')).rejects.not.toThrow(
+      'super-secret-test-key'
+    );
+  });
+
   it('builds deterministic movie and TV episode IDs', () => {
     expect(
       siloContentId({

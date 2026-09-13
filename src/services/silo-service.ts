@@ -165,6 +165,10 @@ export class SiloService {
     );
   }
 
+  stopPlayback(sessionId: string): Promise<boolean> {
+    return this.client().stopPlayback(sessionId);
+  }
+
   fetchMedia(
     pathname: string,
     init: RequestInit = {}
