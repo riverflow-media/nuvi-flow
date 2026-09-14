@@ -256,6 +256,9 @@ describe('media details modal', () => {
     expect(html).toContain('Runtime quality fallback');
     expect(html).toContain('Slow segment threshold');
     expect(html).toContain('position-preserving quality reduction');
+    expect(html).toContain('Playback admission');
+    expect(html).toContain('Concurrent Silo starts');
+    expect(html).toContain('Silo remains authoritative for active stream');
     expect(html).toContain('Missing local media');
     expect(html).toContain('Maximum candidates');
     expect(html).toContain('Network adaptation');

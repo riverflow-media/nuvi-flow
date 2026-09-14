@@ -28,6 +28,11 @@ import {
   PlaybackCapabilityLearner,
   sourcePlaybackCapabilityClaims
 } from './capability-learning.js';
+import {
+  PlaybackStartCapacityError,
+  PlaybackStartCapacityGate,
+  type PlaybackStartCapacityReason
+} from './start-capacity.js';
 
 interface PlaybackLogger {
   info(data: Record<string, unknown>, message: string): void;
@@ -43,6 +48,11 @@ interface PlaybackServiceOptions {
     slowSegmentMs: () => number;
     slowSegmentCount: () => number;
     startupMs: () => number;
+  };
+  startCapacity?: {
+    maxConcurrent: () => number;
+    maxQueued: () => number;
+    queueTimeoutMs: () => number;
   };
 }
 
@@ -74,6 +84,20 @@ export class PlaybackOrchestrationError extends Error {
   }
 }
 
+export type PlaybackCapacityReason =
+  | PlaybackStartCapacityReason
+  | 'silo_capacity_unavailable'
+  | 'silo_route_capacity_unavailable';
+
+export class PlaybackCapacityError extends PlaybackOrchestrationError {
+  readonly retryAfterSeconds = 5;
+
+  constructor(public readonly reason: PlaybackCapacityReason) {
+    super(503, 'Playback capacity is temporarily unavailable. Try again shortly.');
+    this.name = 'PlaybackCapacityError';
+  }
+}
+
 /**
  * Route-independent playback coordinator.
  *
@@ -91,6 +115,7 @@ export class PlaybackService {
   private fallbackAddon: FallbackAddonService | null = null;
   private readonly runtimeFallback: PlaybackServiceOptions['runtimeFallback'];
   private readonly capabilityLearning: PlaybackCapabilityLearner;
+  private readonly startCapacity: PlaybackStartCapacityGate;
 
   constructor(
     private readonly silo: SiloService,
@@ -102,6 +127,7 @@ export class PlaybackService {
     this.keepAliveIdleAfterMs = options.keepAliveIdleAfterMs ?? 10_000;
     this.now = options.now ?? Date.now;
     this.runtimeFallback = options.runtimeFallback;
+    this.startCapacity = new PlaybackStartCapacityGate(options.startCapacity);
     this.capabilityLearning = new PlaybackCapabilityLearner(
       this.capabilities,
       {
@@ -132,7 +158,8 @@ export class PlaybackService {
   }
 
   async tryFallback(
-    input: PlaybackOrchestrationInput
+    input: PlaybackOrchestrationInput,
+    trigger: 'policy' | 'capacity' = 'policy'
   ): Promise<FallbackPlaybackSession | null> {
     if (!this.fallbackAddon) return null;
     this.capabilities.touchDevice(input.deviceId, input.deviceIdentitySource);
@@ -145,11 +172,11 @@ export class PlaybackService {
     );
     if (
       policy.mode !== 'auto-silo' ||
-      !this.fallbackAddon.shouldTryForLocal(
+      (trigger === 'policy' && !this.fallbackAddon.shouldTryForLocal(
         input.file,
         policy.target.likelyVideoTranscode,
         input.networkEstimateMbps
-      )
+      ))
     ) {
       return null;
     }
@@ -361,6 +388,7 @@ export class PlaybackService {
 
   async close(): Promise<void> {
     if (this.keepAliveTimer) clearInterval(this.keepAliveTimer);
+    this.startCapacity.close();
     this.capabilityLearning.close();
     await this.sessions.close();
     await Promise.allSettled(this.terminationPromises.values());
@@ -398,13 +426,31 @@ export class PlaybackService {
       input.authorizationExpiresAt,
       async ({ playbackId }) => {
         const startupStartedAt = this.now();
-        const started = await this.silo.startPlaybackForMedia(
-          input.item,
-          input.file,
-          input.profileId,
-          policy.requestProfile,
-          input.episode
-        );
+        let started: Awaited<
+          ReturnType<SiloService['startPlaybackForMedia']>
+        >;
+        try {
+          started = await this.startCapacity.run(() =>
+            this.silo.startPlaybackForMedia(
+              input.item,
+              input.file,
+              input.profileId,
+              policy.requestProfile,
+              input.episode
+            )
+          );
+        } catch (error) {
+          if (error instanceof PlaybackStartCapacityError) {
+            this.logger.warn({
+              playback_id: playbackId,
+              media_file_id: input.file.id,
+              capacity_reason: error.reason,
+              ...this.startCapacity.counts()
+            }, 'Playback start admission was unavailable');
+            throw new PlaybackCapacityError(error.reason);
+          }
+          throw error;
+        }
 
         if (!started) {
           throw new PlaybackOrchestrationError(
@@ -415,6 +461,24 @@ export class PlaybackService {
 
         const { fileId } = started;
         let { decision } = started;
+        const capacityReason = this.siloCapacityReason(decision);
+        if (capacityReason) {
+          await this.terminateSiloSession(
+            decision.session_id || null,
+            playbackId,
+            'unusable'
+          );
+          this.logger.warn({
+            playback_id: playbackId,
+            media_file_id: input.file.id,
+            silo_file_id: fileId,
+            silo_session_id: decision.session_id || null,
+            capacity_reason: capacityReason,
+            silo_terminal_reason: decision.terminal?.reason,
+            retryable: true
+          }, 'Silo playback capacity was unavailable');
+          throw new PlaybackCapacityError(capacityReason);
+        }
         let plan = decision.playback_plan;
         const hlsPlan =
           ['server_remux_hls', 'server_transcode_hls'].includes(
@@ -434,6 +498,20 @@ export class PlaybackService {
           !plan ||
           (!hlsPlan && !progressivePlan)
         ) {
+          await this.terminateSiloSession(
+            decision.session_id || null,
+            playbackId,
+            'unusable'
+          );
+          this.logger.warn({
+            playback_id: playbackId,
+            media_file_id: input.file.id,
+            silo_file_id: fileId,
+            silo_session_id: decision.session_id || null,
+            silo_outcome: decision.outcome,
+            silo_terminal_reason: decision.terminal?.reason || null,
+            retryable: decision.terminal?.retryable ?? null
+          }, 'Silo returned an unusable playback decision');
           throw new PlaybackOrchestrationError(
             502,
             'Silo did not return a usable playback stream.'
@@ -571,7 +649,7 @@ export class PlaybackService {
   private terminateSiloSession(
     sessionId: string | null,
     playbackId: string,
-    reason: PlaybackSessionRetirementReason | 'replaced'
+    reason: PlaybackSessionRetirementReason | 'replaced' | 'unusable'
   ): Promise<void> {
     if (!sessionId || this.terminatedSessionIds.has(sessionId)) {
       return Promise.resolve();
@@ -606,5 +684,20 @@ export class PlaybackService {
     })();
     this.terminationPromises.set(sessionId, termination);
     return termination;
+  }
+
+  private siloCapacityReason(
+    decision: SiloPlaybackDecision
+  ): PlaybackCapacityReason | null {
+    if (!decision.terminal?.retryable) return null;
+
+    switch (decision.terminal.reason) {
+      case 'capacity_unavailable':
+        return 'silo_capacity_unavailable';
+      case 'route_capacity_unavailable':
+        return 'silo_route_capacity_unavailable';
+      default:
+        return null;
+    }
   }
 }

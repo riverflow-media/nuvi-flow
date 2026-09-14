@@ -73,6 +73,13 @@ The current integration provides:
   revalidation, without exposing an arbitrary URL proxy
 - Concurrent playback-start coalescing
 - Short-lived reuse of active Silo sessions, preventing repeated client requests from starting overlapping FFmpeg jobs
+- Bounded playback-start admission for distinct requests: two starts run at once
+  by default and four more may wait in first-in, first-out order. Duplicate
+  requests coalesce before consuming an admission slot
+- Capacity-aware Auto failover. Retryable Silo `capacity_unavailable` and
+  `route_capacity_unavailable` decisions try the enabled secure fallback addon
+  once, then return a controlled `503` with `Retry-After` when no candidate is
+  available
 - Signed pseudonymous device identity carried from stream discovery into playback,
   allowing fresh URLs from the same identifiable device to reuse its session
 - Persistent pseudonymous device records and capability evidence with declared,
@@ -114,6 +121,10 @@ independently, so a local copy is still prepared for next time. A 5-second timeo
 30-second result cache, and single-flight lookup prevent a slow addon from
 stalling or duplicating requests. If no safe candidate is returned, Auto
 continues through Silo. Fixed-quality Silo selections do not use the fallback.
+The **Before video transcode** setting controls proactive lookup only. When Auto
+has already reached Silo and Silo reports temporary capacity exhaustion, an
+enabled fallback addon may still be tried once so an available external direct
+stream can avoid a failed start.
 Nuvi-Flow inspects all results in the bounded addon response, then retains the
 configured number of safe candidates (10 by default, maximum 25). Structured
 AIOStreams size, duration, bitrate, resolution, and quality metadata is used
@@ -143,6 +154,15 @@ downloaded twice. Results without usable size metadata still participate in
 normal availability failover. Candidate count, startup budget, resolution
 ceiling, downgrade behavior, headroom, observation lifetime, and an optional
 cold-start Mbps ceiling are configurable in the dashboard.
+
+Nuvi-Flow deliberately does not maintain a second active-transcode limit. Silo
+already owns per-user stream/transcode admission and each stream node's live job
+capacity, including transcodes launched by other clients. Nuvi-Flow only limits
+simultaneous protocol-v3 start negotiations to prevent request bursts from
+overloading that control path. The concurrent-start limit, queued-start limit,
+and queue wait are configurable under **Settings → Silo → Playback admission**.
+If Silo returns an unusable decision with a session ID, Nuvi-Flow stops that
+session before falling back or replying to the client.
 
 Successful direct and fallback proxy transfers create a temporary effective
 delivery estimate for a pseudonymous device and hashed network context. Three
@@ -557,12 +577,15 @@ Common environment variables include:
 | `SILO_RUNTIME_FALLBACK_SLOW_SEGMENT_MS` | Segment header wait considered slow, 1,000–15,000 ms; default `2500` |
 | `SILO_RUNTIME_FALLBACK_SLOW_SEGMENT_COUNT` | Consecutive slow segments required, 2–10; default `3` |
 | `SILO_RUNTIME_FALLBACK_STARTUP_MS` | Startup time that triggers the one lower-rung replan, 5,000–60,000 ms; default `20000` |
+| `SILO_MAX_CONCURRENT_STARTS` | Maximum distinct Silo start negotiations running at once, 1–8; default `2` |
+| `SILO_MAX_QUEUED_STARTS` | Additional distinct Silo starts allowed to wait FIFO, 0–32; default `4` |
+| `SILO_START_QUEUE_TIMEOUT_MS` | Maximum queue wait before Auto fallback or a retryable response, 1,000–60,000 ms; default `15000` |
 | `SHOW_DIRECT_PLAY` | Show a separate original-file Direct entry when Silo is available; default `true` |
 | `FALLBACK_ADDON_ENABLED` | Enable the optional pre-transcode fallback addon; default `false` |
 | `FALLBACK_ADDON_MANIFEST_URL` | Private installed manifest URL for AIOStreams or another Stremio-compatible stream addon; never returned to the browser |
 | `FALLBACK_ADDON_TIMEOUT_MS` | Manifest/stream lookup timeout from 1,000–15,000 ms; default `5000` |
 | `FALLBACK_ADDON_USE_FOR_MISSING` | Play through fallback while still queuing missing media in Radarr/Sonarr; default `true` |
-| `FALLBACK_ADDON_BEFORE_TRANSCODE` | Try external direct playback before a likely Silo video transcode; default `true` |
+| `FALLBACK_ADDON_BEFORE_TRANSCODE` | Proactively try external direct playback before a likely Silo video transcode; capacity failover remains available when the addon is enabled; default `true` |
 | `FALLBACK_ADDON_MAX_ATTEMPTS` | Maximum safe candidates retained/contacted, 1–25; default `10` |
 | `FALLBACK_ADDON_STARTUP_BUDGET_MS` | Total candidate failover budget, 5,000–30,000 ms; default `15000` |
 | `FALLBACK_ADDON_MAX_RESOLUTION` | Candidate ceiling: `auto`, `2160p`, `1080p`, `720p`, or `480p` |

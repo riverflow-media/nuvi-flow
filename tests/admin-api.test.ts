@@ -301,6 +301,32 @@ describe('admin media detail API', () => {
     expect(invalid.statusCode).toBe(400);
   });
 
+  it('validates and persists bounded Silo start-admission controls', async () => {
+    const currentSettings = Object.fromEntries(
+      Object.entries(built.settings.publicView())
+        .map(([key, value]) => [key, String(value)])
+    );
+    const saved = await request('PUT', '/admin/api/settings', {
+      ...currentSettings,
+      siloMaxConcurrentStarts: '3',
+      siloMaxQueuedStarts: '8',
+      siloStartQueueTimeoutMs: '12000'
+    });
+    expect(saved.statusCode).toBe(200);
+    expect(saved.json().settings).toMatchObject({
+      siloMaxConcurrentStarts: 3,
+      siloMaxQueuedStarts: 8,
+      siloStartQueueTimeoutMs: 12000
+    });
+    expect(built.settings.siloMaxConcurrentStarts).toBe(3);
+
+    const invalid = await request('PUT', '/admin/api/settings', {
+      ...currentSettings,
+      siloMaxConcurrentStarts: '9'
+    });
+    expect(invalid.statusCode).toBe(400);
+  });
+
   it('validates and stores a private fallback addon manifest without returning it', async () => {
     const testConnection = vi.spyOn(built.fallbackAddon, 'testConnection')
       .mockResolvedValue({

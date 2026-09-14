@@ -180,6 +180,30 @@ export class SettingsService {
     )));
   }
 
+  get siloMaxConcurrentStarts(): number {
+    return Math.min(8, Math.floor(this.number(
+      'siloMaxConcurrentStarts',
+      this.defaults.siloMaxConcurrentStarts,
+      1
+    )));
+  }
+
+  get siloMaxQueuedStarts(): number {
+    return Math.min(32, Math.floor(this.number(
+      'siloMaxQueuedStarts',
+      this.defaults.siloMaxQueuedStarts,
+      0
+    )));
+  }
+
+  get siloStartQueueTimeoutMs(): number {
+    return Math.min(60_000, Math.floor(this.number(
+      'siloStartQueueTimeoutMs',
+      this.defaults.siloStartQueueTimeoutMs,
+      1000
+    )));
+  }
+
   get fallbackAddonEnabled(): boolean {
     return this.boolean(
       'fallbackAddonEnabled',
@@ -304,6 +328,9 @@ export class SettingsService {
       siloRuntimeFallbackSlowSegmentMs: this.siloRuntimeFallbackSlowSegmentMs,
       siloRuntimeFallbackSlowSegmentCount: this.siloRuntimeFallbackSlowSegmentCount,
       siloRuntimeFallbackStartupMs: this.siloRuntimeFallbackStartupMs,
+      siloMaxConcurrentStarts: this.siloMaxConcurrentStarts,
+      siloMaxQueuedStarts: this.siloMaxQueuedStarts,
+      siloStartQueueTimeoutMs: this.siloStartQueueTimeoutMs,
       showDirectPlay: this.showDirectPlay,
       fallbackAddonEnabled: this.fallbackAddonEnabled,
       fallbackAddonConfigured: Boolean(this.fallbackAddonManifestUrl),

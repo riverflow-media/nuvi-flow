@@ -759,6 +759,109 @@ describe('Stremio and media HTTP endpoints', () => {
     expect(streamed.body).toBe('0123456789');
   });
 
+  it('uses the enabled fallback addon when Silo reports temporary capacity exhaustion', async () => {
+    built.settings.set('siloProfileId', 'profile-1');
+    built.settings.set('siloTranscodeQuality', 'auto');
+    built.settings.set('fallbackAddonEnabled', 'true');
+    built.settings.set('fallbackAddonBeforeTranscode', 'false');
+    built.settings.set(
+      'fallbackAddonManifestUrl',
+      'https://aio.example/private-install/manifest.json'
+    );
+    const tryPlayback = vi.spyOn(built.fallbackAddon, 'tryPlayback')
+      .mockResolvedValue({
+        id: '11111111-1111-4111-8111-111111111111',
+        playbackId: 'capacity-fallback-playback',
+        upstreamUrl: 'https://cdn.example/private.mkv',
+        requestHeaders: {},
+        label: 'AIO 1080p',
+        candidates: [],
+        candidateIndex: 0,
+        candidateVerified: true,
+        durationSeconds: null,
+        deviceId: 'device_1234567890abcdef12345678',
+        mediaFileId: 'file1',
+        createdAt: Date.now(),
+        lastAccess: Date.now(),
+        expiresAt: Date.now() + 60_000,
+        maximumExpiresAt: Date.now() + 60_000
+      });
+    vi.stubGlobal('fetch', vi.fn(async (url: string | URL | Request) => {
+      const value = String(url);
+      if (value.endsWith('/versions')) {
+        return new Response(JSON.stringify([{
+          file_id: 120,
+          file_path: mediaPath
+        }]), { status: 200, headers: { 'Content-Type': 'application/json' } });
+      }
+      if (value.endsWith('/playback/start')) {
+        return new Response(JSON.stringify({
+          protocol_version: 3,
+          server_features: ['playback_plan_v3'],
+          outcome: 'terminal',
+          terminal: {
+            reason: 'route_capacity_unavailable',
+            message: 'No eligible node currently has capacity.',
+            retryable: true
+          }
+        }), { status: 201, headers: { 'Content-Type': 'application/json' } });
+      }
+      return new Response(null, { status: 404 });
+    }));
+
+    const response = await built.app.inject({
+      method: 'GET',
+      url: `/silo-stream/${encodeURIComponent(token())}`
+    });
+
+    expect(response.statusCode).toBe(302);
+    expect(response.headers.location).toMatch(/^\/fallback-media\//);
+    expect(response.headers['x-nuvi-flow-playback-id'])
+      .toBe('capacity-fallback-playback');
+    expect(tryPlayback).toHaveBeenCalledOnce();
+  });
+
+  it('returns a controlled retryable response when Silo and fallback capacity are unavailable', async () => {
+    built.settings.set('siloProfileId', 'profile-1');
+    built.settings.set('siloTranscodeQuality', 'auto');
+    built.settings.set('fallbackAddonEnabled', 'false');
+    vi.stubGlobal('fetch', vi.fn(async (url: string | URL | Request) => {
+      const value = String(url);
+      if (value.endsWith('/versions')) {
+        return new Response(JSON.stringify([{
+          file_id: 120,
+          file_path: mediaPath
+        }]), { status: 200, headers: { 'Content-Type': 'application/json' } });
+      }
+      if (value.endsWith('/playback/start')) {
+        return new Response(JSON.stringify({
+          protocol_version: 3,
+          server_features: ['playback_plan_v3'],
+          outcome: 'terminal',
+          terminal: {
+            reason: 'capacity_unavailable',
+            message: 'private upstream capacity detail',
+            retryable: true
+          }
+        }), { status: 201, headers: { 'Content-Type': 'application/json' } });
+      }
+      return new Response(null, { status: 404 });
+    }));
+
+    const response = await built.app.inject({
+      method: 'GET',
+      url: `/silo-stream/${encodeURIComponent(token())}`
+    });
+
+    expect(response.statusCode).toBe(503);
+    expect(response.headers['retry-after']).toBe('5');
+    expect(response.headers['cache-control']).toBe('no-store');
+    expect(response.json()).toEqual({
+      error: 'Playback capacity is temporarily unavailable. Try again shortly.'
+    });
+    expect(response.body).not.toContain('private upstream capacity detail');
+  });
+
   it('does not impose the local test server 1080p ceiling on other Auto users', async () => {
     built.settings.set('siloProfileId', 'profile-1');
     built.settings.set('siloTranscodeQuality', 'auto');

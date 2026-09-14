@@ -95,6 +95,11 @@ export async function buildApp(config: AppConfig): Promise<BuiltApp> {
         slowSegmentMs: () => settings.siloRuntimeFallbackSlowSegmentMs,
         slowSegmentCount: () => settings.siloRuntimeFallbackSlowSegmentCount,
         startupMs: () => settings.siloRuntimeFallbackStartupMs
+      },
+      startCapacity: {
+        maxConcurrent: () => settings.siloMaxConcurrentStarts,
+        maxQueued: () => settings.siloMaxQueuedStarts,
+        queueTimeoutMs: () => settings.siloStartQueueTimeoutMs
       }
     }
   );

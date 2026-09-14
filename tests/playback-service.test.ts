@@ -4,7 +4,10 @@ import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AppDatabase } from '../src/db/index.js';
 import { DeviceCapabilityStore } from '../src/services/playback/device-capabilities.js';
-import { PlaybackService } from '../src/services/playback/playback-service.js';
+import {
+  PlaybackCapacityError,
+  PlaybackService
+} from '../src/services/playback/playback-service.js';
 import { PlaybackSessionRegistry } from '../src/services/playback/playback-sessions.js';
 import type { SiloService } from '../src/services/silo-service.js';
 import type { MediaFileRow, MediaItemRow } from '../src/types.js';
@@ -159,6 +162,164 @@ describe('playback orchestration', () => {
       evidence: 'user_override',
       successCount: 1
     });
+    await service.close();
+  });
+
+  it('admits one distinct start while duplicate callers coalesce before the gate', async () => {
+    const registry = new PlaybackSessionRegistry({ cleanupIntervalMs: 0 });
+    const capabilities = {
+      touchDevice: vi.fn(),
+      getSnapshot: vi.fn(() => ({
+        deviceId: 'device_1234567890abcdef12345678',
+        revision: 'none',
+        capabilities: []
+      }))
+    };
+    let resolveStart!: (value: {
+      fileId: number;
+      playbackAttemptId: string;
+      decision: {
+        protocol_version: 3;
+        server_features: string[];
+        outcome: string;
+        session_id: string;
+        playback_plan: {
+          delivery: string;
+          stream: {
+            url: string;
+            protocol: string;
+            headers: Record<string, string>;
+            header_refresh: string;
+          };
+        };
+      };
+    }) => void;
+    const pendingStart = new Promise<Parameters<typeof resolveStart>[0]>(
+      resolve => { resolveStart = resolve; }
+    );
+    const startPlaybackForMedia = vi.fn(() => pendingStart);
+    const service = new PlaybackService(
+      { startPlaybackForMedia, stopPlayback: vi.fn(async () => true) } as unknown as SiloService,
+      registry,
+      capabilities as unknown as DeviceCapabilityStore,
+      { info: vi.fn(), warn: vi.fn() },
+      {
+        keepAliveIntervalMs: 0,
+        startCapacity: {
+          maxConcurrent: () => 1,
+          maxQueued: () => 0,
+          queueTimeoutMs: () => 1000
+        }
+      }
+    );
+    const input = {
+      item: { type: 'movie', tmdb_id: 123, metadata_json: '{}' } as MediaItemRow,
+      file: {
+        id: 'file-1', absolute_path: '/media/movie.mkv', width: 1920,
+        height: 1080, video_codec: 'h264', audio_codec: 'aac'
+      } as MediaFileRow,
+      deviceId: 'device_1234567890abcdef12345678',
+      deviceIdentitySource: 'signed_stream_token',
+      profileId: 'profile-1',
+      configuredQuality: 'auto',
+      authorizationExpiresAt: Date.now() + 60_000
+    };
+
+    const first = service.orchestrate(input);
+    const duplicate = service.orchestrate(input);
+    await vi.waitFor(() => expect(startPlaybackForMedia).toHaveBeenCalledOnce());
+    await expect(service.orchestrate({
+      ...input,
+      file: { ...input.file, id: 'file-2' }
+    })).rejects.toMatchObject({
+      name: 'PlaybackCapacityError',
+      reason: 'start_queue_full',
+      statusCode: 503
+    });
+    expect(startPlaybackForMedia).toHaveBeenCalledOnce();
+
+    resolveStart({
+      fileId: 120,
+      playbackAttemptId: 'attempt-1',
+      decision: {
+        protocol_version: 3,
+        server_features: [],
+        outcome: 'playable',
+        session_id: 'session-1',
+        playback_plan: {
+          delivery: 'original_http',
+          stream: {
+            url: '/stream/session-1',
+            protocol: 'http_progressive',
+            headers: {},
+            header_refresh: 'none'
+          }
+        }
+      }
+    });
+    const [created, coalesced] = await Promise.all([first, duplicate]);
+    expect(coalesced.sessionResult.session.playbackId)
+      .toBe(created.sessionResult.session.playbackId);
+    await service.close();
+  });
+
+  it('normalizes retryable Silo capacity decisions and stops stray sessions', async () => {
+    const registry = new PlaybackSessionRegistry({ cleanupIntervalMs: 0 });
+    const stopPlayback = vi.fn(async () => true);
+    const logger = { info: vi.fn(), warn: vi.fn() };
+    const service = new PlaybackService(
+      {
+        startPlaybackForMedia: vi.fn(async () => ({
+          fileId: 120,
+          playbackAttemptId: 'attempt-capacity',
+          decision: {
+            protocol_version: 3 as const,
+            server_features: [],
+            outcome: 'terminal',
+            session_id: 'stray-capacity-session',
+            terminal: {
+              reason: 'route_capacity_unavailable',
+              message: 'sensitive upstream detail must stay private',
+              retryable: true
+            }
+          }
+        })),
+        stopPlayback
+      } as unknown as SiloService,
+      registry,
+      {
+        touchDevice: vi.fn(),
+        getSnapshot: vi.fn(() => ({
+          deviceId: 'device_1234567890abcdef12345678',
+          revision: 'none',
+          capabilities: []
+        }))
+      } as unknown as DeviceCapabilityStore,
+      logger,
+      { keepAliveIntervalMs: 0 }
+    );
+
+    await expect(service.orchestrate({
+      item: { type: 'movie', tmdb_id: 123, metadata_json: '{}' } as MediaItemRow,
+      file: {
+        id: 'file-capacity', absolute_path: '/media/movie.mkv',
+        width: 3840, height: 2160, video_codec: 'hevc', audio_codec: 'truehd'
+      } as MediaFileRow,
+      deviceId: 'device_1234567890abcdef12345678',
+      deviceIdentitySource: 'signed_stream_token',
+      profileId: 'profile-1',
+      configuredQuality: 'auto',
+      authorizationExpiresAt: Date.now() + 60_000
+    })).rejects.toEqual(expect.objectContaining<Partial<PlaybackCapacityError>>({
+      name: 'PlaybackCapacityError',
+      reason: 'silo_route_capacity_unavailable',
+      statusCode: 503,
+      retryAfterSeconds: 5
+    }));
+    expect(stopPlayback).toHaveBeenCalledWith('stray-capacity-session');
+    expect(JSON.stringify(logger.warn.mock.calls))
+      .not.toContain('sensitive upstream detail');
+    expect(await registry.activeSnapshot()).toHaveLength(0);
     await service.close();
   });
 

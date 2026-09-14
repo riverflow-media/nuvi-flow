@@ -813,6 +813,9 @@ export function registerAdminRoutes(
       ['siloRuntimeFallbackSlowSegmentMs', 1000],
       ['siloRuntimeFallbackSlowSegmentCount', 2],
       ['siloRuntimeFallbackStartupMs', 5000],
+      ['siloMaxConcurrentStarts', 1],
+      ['siloMaxQueuedStarts', 0],
+      ['siloStartQueueTimeoutMs', 1000],
       ['fallbackAddonTimeoutMs', 1000],
       ['fallbackAddonMaxAttempts', 1],
       ['fallbackAddonStartupBudgetMs', 5000],
@@ -956,12 +959,15 @@ export function registerAdminRoutes(
     }
 
     // Silo playback options.
-    const boundedRuntimeFallbackNumbers: Array<[string, number, number]> = [
+    const boundedSiloNumbers: Array<[string, number, number]> = [
       ['siloRuntimeFallbackSlowSegmentMs', 1000, 15_000],
       ['siloRuntimeFallbackSlowSegmentCount', 2, 10],
-      ['siloRuntimeFallbackStartupMs', 5000, 60_000]
+      ['siloRuntimeFallbackStartupMs', 5000, 60_000],
+      ['siloMaxConcurrentStarts', 1, 8],
+      ['siloMaxQueuedStarts', 0, 32],
+      ['siloStartQueueTimeoutMs', 1000, 60_000]
     ];
-    for (const [key, minimum, maximum] of boundedRuntimeFallbackNumbers) {
+    for (const [key, minimum, maximum] of boundedSiloNumbers) {
       const value = Number(body[key]);
       if (!Number.isInteger(value) || value < minimum || value > maximum) {
         return reply.code(400).send({ error: `${key} is invalid` });

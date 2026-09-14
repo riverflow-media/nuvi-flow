@@ -44,6 +44,9 @@ export interface AppConfig {
   siloRuntimeFallbackSlowSegmentMs: number;
   siloRuntimeFallbackSlowSegmentCount: number;
   siloRuntimeFallbackStartupMs: number;
+  siloMaxConcurrentStarts: number;
+  siloMaxQueuedStarts: number;
+  siloStartQueueTimeoutMs: number;
   showDirectPlay: boolean;
   fallbackAddonEnabled: boolean;
   fallbackAddonManifestUrl: string;
@@ -134,6 +137,21 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
       env.SILO_RUNTIME_FALLBACK_STARTUP_MS,
       20_000,
       5000
+    )),
+    siloMaxConcurrentStarts: Math.floor(numberValue(
+      env.SILO_MAX_CONCURRENT_STARTS,
+      2,
+      1
+    )),
+    siloMaxQueuedStarts: Math.floor(numberValue(
+      env.SILO_MAX_QUEUED_STARTS,
+      4,
+      0
+    )),
+    siloStartQueueTimeoutMs: Math.floor(numberValue(
+      env.SILO_START_QUEUE_TIMEOUT_MS,
+      15_000,
+      1000
     )),
     showDirectPlay: booleanValue(env.SHOW_DIRECT_PLAY, true),
     fallbackAddonEnabled: booleanValue(env.FALLBACK_ADDON_ENABLED, false),

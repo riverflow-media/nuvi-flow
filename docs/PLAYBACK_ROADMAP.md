@@ -190,8 +190,25 @@ the declared SDR target.
 - Poll only while the Activity view is open, while retaining a manual refresh
   control and responsive cards for smaller screens
 
-1. Concurrency and transcoder-capacity controls
-2. Playback outcome reporting and carefully bounded negative evidence, only
+### Completed concurrency and transcoder-capacity controls
+
+- Coalesce duplicate playback requests before admission so every shared start
+  consumes only one slot
+- Bound distinct Silo file-resolution/start operations with a configurable
+  concurrent limit, FIFO queue, maximum queue depth, and queue wait timeout
+- Keep Silo authoritative for active per-user streams/transcodes and stream-node
+  job capacity. Nuvi-Flow does not duplicate incomplete server-wide accounting
+  or block Silo from selecting an available transcode node
+- Normalize retryable protocol-v3 `capacity_unavailable` and
+  `route_capacity_unavailable` terminal decisions without exposing upstream
+  detail
+- Let Auto try the enabled secure fallback addon once on capacity exhaustion,
+  even when proactive pre-transcode lookup is disabled; otherwise return a
+  controlled `503` with `Retry-After`
+- Stop an unexpected Silo session attached to any unusable decision so capacity
+  failover cannot leave an orphaned server workload
+
+1. Playback outcome reporting and carefully bounded negative evidence, only
    where a future client signal can distinguish decoder incompatibility from
    network, source, or transcoder failure
 

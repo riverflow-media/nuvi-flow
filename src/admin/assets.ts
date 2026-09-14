@@ -313,6 +313,29 @@ export function adminHtml(csrf: string): string {
   <p class="help">This only hides the extra menu entry. Auto still gives byte-for-byte original playback first priority, then asks Silo to remux or transcode only when conversion is needed. Direct remains available automatically if Silo is not configured.</p>
 </div>
 
+<div class="settings-section">
+  <h3>Playback admission</h3>
+  <p>Nuvi-Flow bounds simultaneous Silo start negotiations so bursts do not overload the server. Silo remains authoritative for active stream, transcode, and stream-node capacity.</p>
+</div>
+
+<div class="field">
+  <label for="siloMaxConcurrentStarts">Concurrent Silo starts</label>
+  <input id="siloMaxConcurrentStarts" class="input" name="siloMaxConcurrentStarts" type="number" min="1" max="8" step="1">
+  <p class="help">Distinct playback starts allowed at once. Duplicate requests already share one start. Recommended: 2.</p>
+</div>
+
+<div class="field">
+  <label for="siloMaxQueuedStarts">Queued Silo starts</label>
+  <input id="siloMaxQueuedStarts" class="input" name="siloMaxQueuedStarts" type="number" min="0" max="32" step="1">
+  <p class="help">Additional starts allowed to wait in first-in, first-out order. Recommended: 4.</p>
+</div>
+
+<div class="field">
+  <label for="siloStartQueueTimeoutMs">Start queue wait limit</label>
+  <input id="siloStartQueueTimeoutMs" class="input" name="siloStartQueueTimeoutMs" type="number" min="1000" max="60000" step="1000">
+  <p class="help">Maximum queue wait in milliseconds before Auto tries its secure fallback or returns a retryable response. Recommended: 15000.</p>
+</div>
+
 <div class="field">
   <label for="siloRuntimeFallbackEnabled">Runtime quality fallback</label>
   <select id="siloRuntimeFallbackEnabled" class="select" name="siloRuntimeFallbackEnabled">
@@ -362,7 +385,8 @@ export function adminHtml(csrf: string): string {
 
 <div class="field">
   <label for="fallbackAddonBeforeTranscode">Before video transcode</label>
-  <select id="fallbackAddonBeforeTranscode" class="select" name="fallbackAddonBeforeTranscode"><option value="true">Try fallback first</option><option value="false">Use Silo directly</option></select>
+  <select id="fallbackAddonBeforeTranscode" class="select" name="fallbackAddonBeforeTranscode"><option value="true">Try fallback proactively</option><option value="false">Start with Silo</option></select>
+  <p class="help">Controls proactive lookup. If Silo reports temporary capacity exhaustion, an enabled fallback addon may still be tried once.</p>
 </div>
 
 <div class="field">
@@ -479,7 +503,7 @@ async function testIntegration(service,button){const form=document.getElementByI
 function syncAnimeRootState(){const form=document.getElementById('settingsForm');if(!form)return;const enabled=form.elements.sonarrSeparateAnimeRoot?.value==='true';if(form.elements.sonarrAnimeRootFolderPath)form.elements.sonarrAnimeRootFolderPath.disabled=!enabled}
 function fillSettings(force=false){if(settingsDirty&&!force)return;const form=document.getElementById('settingsForm'),s=state.settings;for(const name of ['addonName','baseUrl','moviesPath','tvPath','animePath','scanIntervalMinutes','minimumFileSizeMb','streamTokenExpiryHours','longLivedStreamTokens','adminUsername','autoRequestEnabled','radarrEnabled','radarrUrl','sonarrEnabled','sonarrUrl','sonarrSeparateAnimeRoot','sonarrMonitorWholeSeries','siloEnabled','siloUrl','siloTranscodeQuality','showDirectPlay','fallbackAddonEnabled','fallbackAddonTimeoutMs','fallbackAddonUseForMissing','fallbackAddonBeforeTranscode','fallbackAddonMaxAttempts','fallbackAddonStartupBudgetMs','fallbackAddonMaxResolution','fallbackAddonAllowResolutionDowngrade','fallbackAddonNetworkAdaptation','fallbackAddonNetworkHeadroomPercent','fallbackAddonNetworkMemoryMinutes','fallbackAddonColdStartMbps'])if(form.elements[name])form.elements[name].value=String(s[name]??'');setSelectValue(form.elements.radarrRootFolderPath,s.radarrRootFolderPath,s.radarrRootFolderPath);setSelectValue(form.elements.radarrQualityProfileId,s.radarrQualityProfileId,s.radarrQualityProfileId?'Profile #'+s.radarrQualityProfileId:'Not selected');setSelectValue(form.elements.sonarrRootFolderPath,s.sonarrRootFolderPath,s.sonarrRootFolderPath);setSelectValue(form.elements.sonarrAnimeRootFolderPath,s.sonarrAnimeRootFolderPath,s.sonarrAnimeRootFolderPath);setSelectValue(form.elements.sonarrQualityProfileId,s.sonarrQualityProfileId,s.sonarrQualityProfileId?'Profile #'+s.sonarrQualityProfileId:'Not selected');setSelectValue(form.elements.sonarrAnimeQualityProfileId,s.sonarrAnimeQualityProfileId,s.sonarrAnimeQualityProfileId?'Profile #'+s.sonarrAnimeQualityProfileId:'Use normal TV quality profile');setSelectValue(form.elements.siloProfileId,s.siloProfileId,s.siloProfileId?'Profile '+s.siloProfileId:'Not selected');document.getElementById('tmdbStatus').textContent=s.metadataProvider||'Automatic metadata is active.';const radarrStatus=document.getElementById('radarrStatus');radarrStatus.textContent=s.radarrConfigured?'API key saved.':'No API key saved.';radarrStatus.className='integration-status '+(s.radarrConfigured?'good':'warn');const sonarrStatus=document.getElementById('sonarrStatus');sonarrStatus.textContent=s.sonarrConfigured?'API key saved.':'No API key saved.';sonarrStatus.className='integration-status '+(s.sonarrConfigured?'good':'warn');const siloStatus=document.getElementById('siloStatus');siloStatus.textContent=s.siloConfigured?'API key saved.':'No API key saved.';siloStatus.className='integration-status '+(s.siloConfigured?'good':'warn');const fallbackStatus=document.getElementById('fallbackAddonStatus');fallbackStatus.textContent=s.fallbackAddonConfigured?'Private manifest URL saved.':'No manifest URL saved.';fallbackStatus.className='integration-status '+(s.fallbackAddonConfigured?'good':'warn');if(form.elements.radarrApiKey)form.elements.radarrApiKey.value='';if(form.elements.sonarrApiKey)form.elements.sonarrApiKey.value='';if(form.elements.siloApiKey)form.elements.siloApiKey.value='';if(form.elements.fallbackAddonManifestUrl)form.elements.fallbackAddonManifestUrl.value='';syncAnimeRootState();refreshBranding();syncManifestUrl()}
 const fillSettingsBase=fillSettings;
-fillSettings=function(force=false){fillSettingsBase(force);if(settingsDirty&&!force)return;const form=document.getElementById('settingsForm'),s=state.settings;for(const name of ['siloRuntimeFallbackEnabled','siloRuntimeFallbackSlowSegmentMs','siloRuntimeFallbackSlowSegmentCount','siloRuntimeFallbackStartupMs'])if(form.elements[name])form.elements[name].value=String(s[name]??'')};
+fillSettings=function(force=false){fillSettingsBase(force);if(settingsDirty&&!force)return;const form=document.getElementById('settingsForm'),s=state.settings;for(const name of ['siloRuntimeFallbackEnabled','siloRuntimeFallbackSlowSegmentMs','siloRuntimeFallbackSlowSegmentCount','siloRuntimeFallbackStartupMs','siloMaxConcurrentStarts','siloMaxQueuedStarts','siloStartQueueTimeoutMs'])if(form.elements[name])form.elements[name].value=String(s[name]??'')};
 async function load(){const request=++stateRequest,[data,requestData]=await Promise.all([api('/admin/api/state'),api('/admin/api/requests')]);if(request!==stateRequest)return;state={...state,...data,requests:requestData.requests||[]};render()}
 async function loadActivity(){const request=++activityRequest,data=await api('/admin/api/activity');if(request!==activityRequest)return;state.activity=data.activity||[];renderActivity()}
 async function loadDevices(){const request=++deviceRequest,data=await api('/admin/api/devices');if(request!==deviceRequest)return;state.devices=data.devices||[];state.deviceOptions=data.options||[];renderDevices()}

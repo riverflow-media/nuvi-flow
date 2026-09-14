@@ -16,6 +16,7 @@ import {
 } from '../lib/security.js';
 import { deriveDeviceIdentity } from '../services/playback/device-identity.js';
 import {
+  PlaybackCapacityError,
   PlaybackOrchestrationError,
   type PlaybackService
 } from '../services/playback/playback-service.js';
@@ -27,7 +28,10 @@ import {
   rewriteHlsManifest
 } from '../services/playback/hls-proxy.js';
 import type { SiloService } from '../services/silo-service.js';
-import type { FallbackAddonService } from '../services/playback/fallback-addon.js';
+import type {
+  FallbackAddonService,
+  FallbackPlaybackSession
+} from '../services/playback/fallback-addon.js';
 import type { NetworkProfileStore } from '../services/playback/network-profiles.js';
 import type { SettingsService } from '../services/settings.js';
 import type {
@@ -63,6 +67,25 @@ function finishActivityWithStream(
   stream.once('end', activity.finish);
   stream.once('close', activity.finish);
   stream.once('error', activity.finish);
+}
+
+function redirectToFallback(
+  reply: FastifyReply,
+  fallback: FallbackPlaybackSession,
+  authorizationExpiresAt: number,
+  streamSecret: string
+): FastifyReply {
+  const { token } = createFallbackMediaToken(
+    fallback.id,
+    authorizationExpiresAt,
+    streamSecret
+  );
+  return reply
+    .code(302)
+    .header('Location', '/fallback-media/' + encodeURIComponent(token))
+    .header('X-Nuvi-Flow-Playback-Id', fallback.playbackId)
+    .header('Cache-Control', 'no-store')
+    .send();
 }
 
 function authorize(request: FastifyRequest, database: AppDatabase, config: AppConfig): { file: MediaFileRow; token: ReturnType<typeof verifyStreamToken> } | null {
@@ -270,40 +293,64 @@ async function serveSiloStream(
       ? 'signed_stream_token'
       : fallbackIdentity!.source;
   let sessionResult;
+  const orchestrationInput = {
+    item,
+    file: authorized.file,
+    deviceId,
+    deviceIdentitySource,
+    profileId: settings.siloProfileId,
+    configuredQuality: settings.siloTranscodeQuality,
+    authorizationExpiresAt: authorized.token!.exp,
+    episode,
+    networkEstimateMbps: settings.fallbackAddonEnabled &&
+      settings.fallbackAddonNetworkAdaptation
+      ? networkProfiles.usableEstimateMbps(deviceId, request.ip)
+      : null,
+    networkContextId: networkProfiles.context(deviceId, request.ip).id
+  };
 
   try {
-    const orchestrationInput = {
-      item,
-      file: authorized.file,
-      deviceId,
-      deviceIdentitySource,
-      profileId: settings.siloProfileId,
-      configuredQuality: settings.siloTranscodeQuality,
-      authorizationExpiresAt: authorized.token!.exp,
-      episode,
-      networkEstimateMbps: settings.fallbackAddonEnabled &&
-        settings.fallbackAddonNetworkAdaptation
-        ? networkProfiles.usableEstimateMbps(deviceId, request.ip)
-        : null,
-      networkContextId: networkProfiles.context(deviceId, request.ip).id
-    };
     const fallback = await playback.tryFallback(orchestrationInput);
     if (fallback) {
-      const { token } = createFallbackMediaToken(
-        fallback.id,
+      return redirectToFallback(
+        reply,
+        fallback,
         authorized.token!.exp,
         config.streamSecret
       );
-      return reply
-        .code(302)
-        .header('Location', '/fallback-media/' + encodeURIComponent(token))
-        .header('X-Nuvi-Flow-Playback-Id', fallback.playbackId)
-        .header('Cache-Control', 'no-store')
-        .send();
     }
     const result = await playback.orchestrate(orchestrationInput);
     sessionResult = result.sessionResult;
   } catch (error) {
+    if (error instanceof PlaybackCapacityError) {
+      let fallback: FallbackPlaybackSession | null = null;
+      try {
+        fallback = await playback.tryFallback(
+          orchestrationInput,
+          'capacity'
+        );
+      } catch (fallbackError) {
+        request.log.warn({
+          capacity_reason: error.reason,
+          fallback_error: fallbackError instanceof Error
+            ? fallbackError.name
+            : 'unknown'
+        }, 'Capacity fallback could not be selected');
+      }
+      if (fallback) {
+        return redirectToFallback(
+          reply,
+          fallback,
+          authorized.token!.exp,
+          config.streamSecret
+        );
+      }
+      return reply
+        .code(error.statusCode)
+        .header('Retry-After', String(error.retryAfterSeconds))
+        .header('Cache-Control', 'no-store')
+        .send({ error: error.message });
+    }
     if (error instanceof PlaybackOrchestrationError) {
       return reply
         .code(error.statusCode)
