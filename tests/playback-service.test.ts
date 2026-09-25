@@ -9,6 +9,7 @@ import {
   PlaybackService
 } from '../src/services/playback/playback-service.js';
 import { PlaybackSessionRegistry } from '../src/services/playback/playback-sessions.js';
+import type { PlaybackOutcomeStore } from '../src/services/playback/playback-outcomes.js';
 import type { SiloService } from '../src/services/silo-service.js';
 import type { MediaFileRow, MediaItemRow } from '../src/types.js';
 
@@ -67,6 +68,10 @@ describe('playback orchestration', () => {
       stopPlayback
     } as unknown as SiloService;
     const logger = { info: vi.fn(), warn: vi.fn() };
+    const recordOutcome = vi.fn(() => true);
+    const outcomes = {
+      record: recordOutcome
+    } as unknown as PlaybackOutcomeStore;
     const service = new PlaybackService(
       silo,
       registry,
@@ -75,7 +80,8 @@ describe('playback orchestration', () => {
       {
         keepAliveIntervalMs: 0,
         keepAliveIdleAfterMs: 10_000,
-        now: () => now
+        now: () => now,
+        outcomes
       }
     );
     const deviceId = 'device_1234567890abcdef12345678';
@@ -162,6 +168,15 @@ describe('playback orchestration', () => {
       evidence: 'user_override',
       successCount: 1
     });
+    expect(recordOutcome).toHaveBeenCalledWith(expect.objectContaining({
+      playbackId: first.sessionResult.session.playbackId,
+      code: 'route_selected',
+      route: 'server_remux_hls',
+      failureDomain: 'none'
+    }));
+    expect(recordOutcome.mock.calls.filter(
+      ([outcome]) => outcome.code === 'delivery_observed'
+    )).toHaveLength(1);
     await service.close();
   });
 

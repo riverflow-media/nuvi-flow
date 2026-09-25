@@ -208,9 +208,34 @@ the declared SDR target.
 - Stop an unexpected Silo session attached to any unusable decision so capacity
   failover cannot leave an orphaned server workload
 
-1. Playback outcome reporting and carefully bounded negative evidence, only
-   where a future client signal can distinguish decoder incompatibility from
-   network, source, or transcoder failure
+### Completed server-observed playback outcome foundation
+
+- Persist a sanitized, authenticated Activity timeline for route selection,
+  accepted delivery responses, degraded delivery, bounded quality fallback,
+  capacity exhaustion, and unavailable source or plan outcomes
+- Keep one row per playback/classification pair, at most 2,000 rows, and at most
+  30 days of history so HLS segment traffic cannot grow the database without
+  bound
+- Record only enumerated providers, routes, failure domains, and short reason
+  codes. File paths, upstream URLs, signed tokens, headers, raw client identity,
+  credentials, and internal Silo session IDs have no persistence field
+- Treat accepted HTTP delivery as a server observation, not proof of client
+  decode or playback. Slow delivery remains explicitly ambiguous when Nuvi-Flow
+  cannot distinguish network, source, Silo, or transcoder pressure
+- Never convert these observations into automatic negative device capability
+  evidence. Existing positive learning still requires a sustained clean HLS
+  run, and administrator overrides remain authoritative
+- Apply the additive SQLite schema through the verified pre-migration backup
+  path and keep outcome diagnostics unable to interrupt media delivery
+
+### Remaining capability-learning boundary
+
+- Add decoder-specific negative evidence only if a future client integration
+  supplies an explicit, authenticated playback result that distinguishes decode
+  incompatibility from network, source, proxy, or transcoder failure
+- Require repeated observations, confidence/decay, and a reversible state before
+  any such signal can influence Auto; one ambiguous failure must never blacklist
+  a capability
 
 ## Later interface work
 

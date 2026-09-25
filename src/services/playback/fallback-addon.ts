@@ -4,6 +4,7 @@ import { isIP } from 'node:net';
 import type { MediaFileRow, MediaItemRow } from '../../types.js';
 import type { SettingsService } from '../settings.js';
 import { buildInfo } from '../../lib/build-info.js';
+import type { PlaybackOutcomeStore } from './playback-outcomes.js';
 
 const MAX_RESPONSE_BYTES = 1024 * 1024;
 const MAX_CANDIDATES = 25;
@@ -68,6 +69,7 @@ export interface FallbackPlaybackSession {
   candidates: FallbackCandidate[];
   candidateIndex: number;
   candidateVerified: boolean;
+  deliveryOutcomeRecorded: boolean;
   durationSeconds: number | null;
   createdAt: number;
   lastAccess: number;
@@ -144,6 +146,7 @@ interface FallbackAddonOptions {
   lookup?: (hostname: string) => Promise<string[]>;
   now?: () => number;
   cleanupIntervalMs?: number;
+  outcomes?: PlaybackOutcomeStore;
 }
 
 function parseManifestUrl(value: string): URL {
@@ -439,6 +442,7 @@ export class FallbackAddonService {
   private readonly pending = new Map<string, Promise<unknown>>();
   private readonly sessionsById = new Map<string, FallbackPlaybackSession>();
   private readonly sessionIdsByKey = new Map<string, string>();
+  private readonly outcomes: PlaybackOutcomeStore | null;
 
   constructor(
     private readonly settings: SettingsService,
@@ -450,6 +454,7 @@ export class FallbackAddonService {
       (await dnsLookup(hostname, { all: true, verbatim: true }))
         .map(result => result.address));
     this.now = options.now ?? Date.now;
+    this.outcomes = options.outcomes ?? null;
     const interval = options.cleanupIntervalMs ?? 60_000;
     this.cleanupTimer = interval > 0
       ? setInterval(() => this.cleanupExpired(), interval)
@@ -558,6 +563,7 @@ export class FallbackAddonService {
       candidates,
       candidateIndex: 0,
       candidateVerified: false,
+      deliveryOutcomeRecorded: false,
       durationSeconds: input.file?.duration_seconds ?? candidate.durationSeconds ?? null,
       createdAt: now,
       lastAccess: now,
@@ -572,6 +578,13 @@ export class FallbackAddonService {
     };
     this.sessionsById.set(session.id, session);
     this.sessionIdsByKey.set(key, session.id);
+    this.recordOutcome(
+      session,
+      'route_selected',
+      'info',
+      'none',
+      'provider_candidate_selected'
+    );
     this.logger.info({
       playback_id: session.playbackId,
       device_id: input.deviceId,
@@ -695,6 +708,20 @@ export class FallbackAddonService {
         session.upstreamUrl = candidate.url;
         session.requestHeaders = candidate.requestHeaders;
         session.label = candidate.label;
+        if (
+          !session.deliveryOutcomeRecorded &&
+          String(init.method || 'GET').toUpperCase() !== 'HEAD'
+        ) {
+          session.deliveryOutcomeRecorded = true;
+          this.recordOutcome(
+            session,
+            'delivery_observed',
+            'info',
+            'none',
+            'http_response_accepted',
+            response.status
+          );
+        }
         return response;
       } catch (error) {
         lastFailure = error instanceof DOMException && error.name === 'AbortError'
@@ -705,6 +732,13 @@ export class FallbackAddonService {
         this.logCandidateFailure(session, index, lastFailure);
       }
     }
+    this.recordOutcome(
+      session,
+      'upstream_unavailable',
+      'error',
+      'transport',
+      lastFailure
+    );
     this.removeSession(session.id);
     throw new Error(`Fallback candidates exhausted: ${lastFailure}`);
   }
@@ -747,6 +781,16 @@ export class FallbackAddonService {
     reason: string,
     details: Record<string, unknown> = {}
   ): void {
+    this.recordOutcome(
+      session,
+      'fallback_candidate_failed',
+      'warning',
+      reason === 'insufficient_throughput' ? 'ambiguous' : 'transport',
+      reason,
+      reason.startsWith('http_')
+        ? Number.parseInt(reason.slice(5), 10)
+        : null
+    );
     this.logger.warn({
       playback_id: session.playbackId,
       provider: 'fallback_addon',
@@ -755,6 +799,40 @@ export class FallbackAddonService {
       reason,
       ...details
     }, 'Fallback addon candidate failed');
+  }
+
+  private recordOutcome(
+    session: FallbackPlaybackSession,
+    code: Parameters<PlaybackOutcomeStore['record']>[0]['code'],
+    level: Parameters<PlaybackOutcomeStore['record']>[0]['level'],
+    failureDomain: Parameters<PlaybackOutcomeStore['record']>[0]['failureDomain'],
+    reason: string | null,
+    httpStatus: number | null = null
+  ): void {
+    try {
+      this.outcomes?.record({
+        playbackId: session.playbackId,
+        code,
+        provider: 'fallback-addon',
+        route: 'external_direct_http',
+        level,
+        failureDomain,
+        reason,
+        httpStatus,
+        mediaFileId: session.mediaFileId ?? null,
+        mediaId: session.mediaId,
+        mediaType: session.mediaType,
+        season: session.season,
+        episode: session.episode,
+        deviceId: session.deviceId ?? null
+      });
+    } catch (error) {
+      this.logger.warn({
+        playback_id: session.playbackId,
+        outcome_code: code,
+        error
+      }, 'Playback outcome could not be recorded');
+    }
   }
 
   private async probeNetwork(

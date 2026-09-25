@@ -326,9 +326,19 @@ describe('PlaybackSessionRegistry', () => {
       '/api/v1/playback/transcode/silo-session-a/segment/seg_00001.ts';
 
     expect(registry.recordUpstreamResponse(segment, 2_100, 200))
-      .toMatchObject({ slow: true, slowResponseCount: 1, summaryDue: false });
+      .toMatchObject({
+        slow: true,
+        slowResponseCount: 1,
+        summaryDue: false,
+        deliveryOutcomeDue: true
+      });
     expect(registry.recordUpstreamResponse(segment, 2_200, 200))
-      .toMatchObject({ slow: true, slowResponseCount: 2, summaryDue: false });
+      .toMatchObject({
+        slow: true,
+        slowResponseCount: 2,
+        summaryDue: false,
+        deliveryOutcomeDue: false
+      });
     expect(registry.recordUpstreamResponse(segment, 2_300, 200))
       .toMatchObject({ slow: true, slowResponseCount: 3, summaryDue: true });
     expect((await registry.activeSnapshot())[0]).toMatchObject({

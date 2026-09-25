@@ -85,6 +85,10 @@ describe('admin media detail API', () => {
     const file = built.database.sqlite.prepare(
       'SELECT * FROM media_files WHERE id=?'
     ).get('file1') as MediaFileRow;
+    built.deviceCapabilities.touchDevice(
+      'device_1234567890abcdef12345678',
+      'explicit'
+    );
     const transfer = built.playbackActivity.beginDirect({
       requestScope: 'private-stream-token-id',
       deviceId: 'device_1234567890abcdef12345678',
@@ -119,6 +123,16 @@ describe('admin media detail API', () => {
         videoCodec: 'h264',
         audioCodec: 'aac'
       }
+    }]);
+    expect(response.json().outcomes).toMatchObject([{
+      playbackId: transfer.playbackId,
+      title: 'Example Movie',
+      deviceLabel: 'Device 12345678',
+      provider: 'nuvi-flow',
+      route: 'direct_file',
+      code: 'delivery_observed',
+      failureDomain: 'none',
+      capabilityEvidence: false
     }]);
     expect(response.body).not.toContain('private-stream-token-id');
     expect(response.body).not.toContain(file.absolute_path);

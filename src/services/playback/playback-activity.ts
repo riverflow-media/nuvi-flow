@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import type { MediaFileRow } from '../../types.js';
 import type { FallbackAddonService } from './fallback-addon.js';
 import type { PlaybackSessionRegistry } from './playback-sessions.js';
+import type { PlaybackOutcomeStore } from './playback-outcomes.js';
 
 const DEFAULT_IDLE_WINDOW_MS = 15_000;
 const DEFAULT_DIRECT_LINGER_MS = 30_000;
@@ -88,6 +89,7 @@ interface DirectActivity {
   expiresAt: number;
   maximumExpiresAt: number;
   activeTransfers: number;
+  deliveryOutcomeRecorded: boolean;
 }
 
 interface PlaybackActivityOptions {
@@ -95,6 +97,7 @@ interface PlaybackActivityOptions {
   idleWindowMs?: number;
   directLingerMs?: number;
   cleanupIntervalMs?: number;
+  outcomes?: PlaybackOutcomeStore;
 }
 
 function finiteNumber(value: unknown): number | null {
@@ -122,6 +125,7 @@ export class PlaybackActivityService {
   private readonly idleWindowMs: number;
   private readonly directLingerMs: number;
   private readonly cleanupTimer: NodeJS.Timeout | null;
+  private readonly outcomes: PlaybackOutcomeStore | null;
 
   constructor(
     private readonly siloSessions: PlaybackSessionRegistry,
@@ -131,6 +135,7 @@ export class PlaybackActivityService {
     this.now = options.now ?? Date.now;
     this.idleWindowMs = options.idleWindowMs ?? DEFAULT_IDLE_WINDOW_MS;
     this.directLingerMs = options.directLingerMs ?? DEFAULT_DIRECT_LINGER_MS;
+    this.outcomes = options.outcomes ?? null;
     const interval = options.cleanupIntervalMs ?? 15_000;
     this.cleanupTimer = interval > 0
       ? setInterval(() => this.cleanup(), interval)
@@ -162,7 +167,8 @@ export class PlaybackActivityService {
         lastActivityAt: now,
         expiresAt: Math.min(input.authorizationExpiresAt, now + this.directLingerMs),
         maximumExpiresAt: input.authorizationExpiresAt,
-        activeTransfers: 0
+        activeTransfers: 0,
+        deliveryOutcomeRecorded: false
       };
       this.direct.set(input.requestScope, activity);
     }
@@ -172,6 +178,27 @@ export class PlaybackActivityService {
       activity.maximumExpiresAt,
       now + this.directLingerMs
     );
+    if (!activity.deliveryOutcomeRecorded) {
+      activity.deliveryOutcomeRecorded = true;
+      try {
+        this.outcomes?.record({
+          playbackId: activity.playbackId,
+          code: 'delivery_observed',
+          provider: 'nuvi-flow',
+          route: 'direct_file',
+          level: 'info',
+          failureDomain: 'none',
+          reason: 'byte_range_accepted',
+          mediaFileId: activity.mediaFileId,
+          mediaType: activity.mediaType,
+          season: activity.season,
+          episode: activity.episode,
+          deviceId: activity.deviceId
+        });
+      } catch {
+        // Outcome diagnostics must never interrupt media delivery.
+      }
+    }
     let finished = false;
     return {
       playbackId: activity.playbackId,

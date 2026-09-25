@@ -146,6 +146,61 @@ export const playbackNetworkProfiles = sqliteTable('playback_network_profiles', 
   index('playback_network_profiles_expiry_idx').on(table.expiresAt)
 ]);
 
+export const playbackOutcomes = sqliteTable('playback_outcomes', {
+  playbackId: text('playback_id').notNull(),
+  code: text('code', { enum: [
+    'route_selected',
+    'delivery_observed',
+    'delivery_degraded',
+    'quality_fallback_applied',
+    'quality_fallback_failed',
+    'capacity_unavailable',
+    'media_unavailable',
+    'plan_unavailable',
+    'fallback_candidate_failed',
+    'upstream_unavailable'
+  ] }).notNull(),
+  provider: text('provider', { enum: [
+    'nuvi-flow',
+    'silo',
+    'fallback-addon'
+  ] }).notNull(),
+  route: text('route', { enum: [
+    'direct_file',
+    'original_http',
+    'server_remux_progressive',
+    'server_remux_hls',
+    'server_transcode_hls',
+    'external_direct_http'
+  ] }),
+  level: text('level', { enum: ['info', 'warning', 'error'] }).notNull(),
+  failureDomain: text('failure_domain', { enum: [
+    'none',
+    'capacity',
+    'source',
+    'server',
+    'transcoder',
+    'transport',
+    'ambiguous'
+  ] }).notNull(),
+  reason: text('reason'),
+  httpStatus: integer('http_status'),
+  mediaFileId: text('media_file_id').references(() => mediaFiles.id, { onDelete: 'set null' }),
+  mediaId: text('media_id'),
+  mediaType: text('media_type', { enum: ['movie', 'series'] }),
+  season: integer('season'),
+  episode: integer('episode'),
+  deviceId: text('device_id').references(() => playbackDevices.id, { onDelete: 'set null' }),
+  capabilityEvidence: integer('capability_evidence', { mode: 'boolean' }).notNull().default(false),
+  firstObservedAt: integer('first_observed_at').notNull(),
+  lastObservedAt: integer('last_observed_at').notNull()
+}, (table) => [
+  uniqueIndex('playback_outcomes_playback_code_uq')
+    .on(table.playbackId, table.code),
+  index('playback_outcomes_recent_idx').on(table.lastObservedAt),
+  index('playback_outcomes_device_idx').on(table.deviceId)
+]);
+
 export const externalSubtitles = sqliteTable('external_subtitles', {
   id: text('id').primaryKey(),
   mediaFileId: text('media_file_id').notNull().references(() => mediaFiles.id, { onDelete: 'cascade' }),

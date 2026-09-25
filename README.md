@@ -106,6 +106,12 @@ The current integration provides:
   and target media details, fallback state, and a short playback trace ID. The
   view never returns file paths, upstream URLs, signed token IDs, internal Silo
   session IDs, or credentials
+- A persistent **Recent server observations** timeline under Activity for route
+  selection, accepted delivery responses, degraded delivery, bounded quality
+  fallback, capacity pressure, and unavailable sources/plans. Observations are
+  deduplicated by playback and classification, retained for at most 30 days and
+  2,000 rows, and contain no paths, URLs, request headers, tokens, raw client
+  identity, or internal Silo session IDs
 - An optional private Stremio-compatible fallback addon. Auto can use it when
   local media is missing, before a likely full video transcode, or when a
   reliable short-lived observation indicates that the current device/network
@@ -180,6 +186,14 @@ struggling 1080p rung) without an endless restart loop. Nuvi-Flow derives an
 approximate source position from the HLS media playlist so Silo can replan near
 the active segment. This per-session signal expires with the session and never
 becomes permanent device capability evidence.
+
+The Activity observation timeline reports only what Nuvi-Flow can verify at its
+server boundary. An accepted byte range or HLS response means delivery reached
+the addon proxy; it does not prove that Nuvio decoded or displayed the media.
+Likewise, a slow response can be caused by the source, network, Silo, or the
+transcoder. These observations therefore never create automatic negative device
+capability evidence. Explicit client playback events would be required before
+decoder incompatibility could be learned safely.
 
 This foundation selects and probes the fallback before a predicted video
 conversion; it does not replace a stream after playback has already started.
@@ -406,6 +420,7 @@ Default endpoints:
 - SQLite database
 - Verified pre-migration SQLite backups created before upgrading an existing
   database to a newer schema
+- A bounded, sanitized history of recent server-side playback observations
 - Saved settings
 - Uploaded addon icon
 

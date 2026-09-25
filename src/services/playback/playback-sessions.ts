@@ -72,6 +72,7 @@ export interface PlaybackSession extends PlaybackSessionStart {
   successfulSegmentCount: number;
   cleanMediaStartedAt: number;
   capabilityEvidenceRecorded: boolean;
+  deliveryOutcomeRecorded: boolean;
   lastPositionSeconds: number;
   pathAliases: string[];
 }
@@ -88,9 +89,14 @@ export interface PlaybackMediaObservation {
   fallbackDue: boolean;
   fallbackReason: PlaybackRuntimeFallback['reason'];
   capabilityEvidenceDue: boolean;
+  deliveryOutcomeDue: boolean;
   deviceId: string;
   capabilityClaims: PlaybackCapabilityClaim[];
   playbackKey: string;
+  mediaFileId: string;
+  delivery: string;
+  season: number | null;
+  episode: number | null;
 }
 
 export interface PlaybackObservationOptions {
@@ -310,6 +316,7 @@ export class PlaybackSessionRegistry {
         successfulSegmentCount: 0,
         cleanMediaStartedAt: 0,
         capabilityEvidenceRecorded: false,
+        deliveryOutcomeRecorded: false,
         lastPositionSeconds: started.runtimeFallback?.plan.timeline
           ?.source_start_seconds || 0,
         pathAliases: []
@@ -464,6 +471,9 @@ export class PlaybackSessionRegistry {
         session.successfulSegmentCount >= 15 &&
         this.now() - session.cleanMediaStartedAt >= 30_000;
       if (capabilityEvidenceDue) session.capabilityEvidenceRecorded = true;
+      const deliveryOutcomeDue = !session.deliveryOutcomeRecorded &&
+        status >= 200 && status < 400;
+      if (deliveryOutcomeDue) session.deliveryOutcomeRecorded = true;
       const fallbackReason = session.runtimeFallback?.state === 'ready'
         ? session.consecutiveFailureCount >= 2
           ? 'status_failures'
@@ -475,6 +485,10 @@ export class PlaybackSessionRegistry {
       return {
         playbackKey: session.playbackKey,
         playbackId: session.playbackId,
+        mediaFileId: session.mediaFileId,
+        delivery: session.delivery,
+        season: session.season,
+        episode: session.episode,
         siloSessionId: session.siloSessionId,
         durationMs,
         status,
@@ -482,6 +496,7 @@ export class PlaybackSessionRegistry {
         slowResponseCount: session.slowMediaResponseCount,
         slow,
         capabilityEvidenceDue,
+        deliveryOutcomeDue,
         deviceId: session.deviceId,
         capabilityClaims: session.capabilityClaims || [],
         fallbackDue: fallbackReason !== null,

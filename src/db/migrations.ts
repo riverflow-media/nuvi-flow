@@ -172,5 +172,61 @@ export const migrations = [
   );
 
   CREATE INDEX IF NOT EXISTS playback_network_profiles_expiry_idx
-    ON playback_network_profiles(expires_at);`
+    ON playback_network_profiles(expires_at);`,
+  `CREATE TABLE IF NOT EXISTS playback_outcomes (
+    playback_id TEXT NOT NULL,
+    code TEXT NOT NULL CHECK(code IN (
+      'route_selected',
+      'delivery_observed',
+      'delivery_degraded',
+      'quality_fallback_applied',
+      'quality_fallback_failed',
+      'capacity_unavailable',
+      'media_unavailable',
+      'plan_unavailable',
+      'fallback_candidate_failed',
+      'upstream_unavailable'
+    )),
+    provider TEXT NOT NULL CHECK(provider IN (
+      'nuvi-flow',
+      'silo',
+      'fallback-addon'
+    )),
+    route TEXT CHECK(route IS NULL OR route IN (
+      'direct_file',
+      'original_http',
+      'server_remux_progressive',
+      'server_remux_hls',
+      'server_transcode_hls',
+      'external_direct_http'
+    )),
+    level TEXT NOT NULL CHECK(level IN ('info','warning','error')),
+    failure_domain TEXT NOT NULL CHECK(failure_domain IN (
+      'none',
+      'capacity',
+      'source',
+      'server',
+      'transcoder',
+      'transport',
+      'ambiguous'
+    )),
+    reason TEXT,
+    http_status INTEGER,
+    media_file_id TEXT REFERENCES media_files(id) ON DELETE SET NULL,
+    media_id TEXT,
+    media_type TEXT CHECK(media_type IS NULL OR media_type IN ('movie','series')),
+    season INTEGER,
+    episode INTEGER,
+    device_id TEXT REFERENCES playback_devices(id) ON DELETE SET NULL,
+    capability_evidence INTEGER NOT NULL DEFAULT 0 CHECK(capability_evidence IN (0,1)),
+    first_observed_at INTEGER NOT NULL,
+    last_observed_at INTEGER NOT NULL,
+    PRIMARY KEY(playback_id, code)
+  );
+
+  CREATE INDEX IF NOT EXISTS playback_outcomes_recent_idx
+    ON playback_outcomes(last_observed_at);
+
+  CREATE INDEX IF NOT EXISTS playback_outcomes_device_idx
+    ON playback_outcomes(device_id);`
 ] as const;

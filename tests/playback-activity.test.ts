@@ -6,6 +6,7 @@ import {
 import {
   PlaybackSessionRegistry
 } from '../src/services/playback/playback-sessions.js';
+import type { PlaybackOutcomeStore } from '../src/services/playback/playback-outcomes.js';
 import type { MediaFileRow } from '../src/types.js';
 
 const file = {
@@ -88,11 +89,15 @@ describe('PlaybackActivityService', () => {
     const fallback = {
       activeSnapshot: vi.fn(() => [])
     } as unknown as FallbackAddonService;
+    const outcomes = {
+      record: vi.fn(() => true)
+    } as unknown as PlaybackOutcomeStore;
     const activity = new PlaybackActivityService(sessions, fallback, {
       now: () => now,
       idleWindowMs: 100,
       directLingerMs: 500,
-      cleanupIntervalMs: 0
+      cleanupIntervalMs: 0,
+      outcomes
     });
     const transfer = activity.beginDirect({
       requestScope: 'private-signed-token-id',
@@ -100,6 +105,14 @@ describe('PlaybackActivityService', () => {
       file,
       authorizationExpiresAt: 10_000
     });
+    const secondTransfer = activity.beginDirect({
+      requestScope: 'private-signed-token-id',
+      deviceId: 'device_1234567890abcdef12345678',
+      file,
+      authorizationExpiresAt: 10_000
+    });
+
+    expect(outcomes.record).toHaveBeenCalledOnce();
 
     const streaming = await activity.snapshot();
     expect(streaming).toMatchObject([{
@@ -118,6 +131,7 @@ describe('PlaybackActivityService', () => {
     expect(JSON.stringify(streaming)).not.toContain('private-signed-token-id');
 
     transfer.finish();
+    secondTransfer.finish();
     now += 101;
     expect((await activity.snapshot())[0]?.state).toBe('idle');
     now += 500;

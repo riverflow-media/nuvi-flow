@@ -120,6 +120,62 @@ export interface PlaybackNetworkProfileRow {
   expires_at: number;
 }
 
+export type PlaybackOutcomeProvider =
+  | 'nuvi-flow'
+  | 'silo'
+  | 'fallback-addon';
+
+export type PlaybackOutcomeRoute =
+  | 'direct_file'
+  | 'original_http'
+  | 'server_remux_progressive'
+  | 'server_remux_hls'
+  | 'server_transcode_hls'
+  | 'external_direct_http';
+
+export type PlaybackOutcomeCode =
+  | 'route_selected'
+  | 'delivery_observed'
+  | 'delivery_degraded'
+  | 'quality_fallback_applied'
+  | 'quality_fallback_failed'
+  | 'capacity_unavailable'
+  | 'media_unavailable'
+  | 'plan_unavailable'
+  | 'fallback_candidate_failed'
+  | 'upstream_unavailable';
+
+export type PlaybackOutcomeLevel = 'info' | 'warning' | 'error';
+
+export type PlaybackOutcomeDomain =
+  | 'none'
+  | 'capacity'
+  | 'source'
+  | 'server'
+  | 'transcoder'
+  | 'transport'
+  | 'ambiguous';
+
+export interface PlaybackOutcomeRow {
+  playback_id: string;
+  code: PlaybackOutcomeCode;
+  provider: PlaybackOutcomeProvider;
+  route: PlaybackOutcomeRoute | null;
+  level: PlaybackOutcomeLevel;
+  failure_domain: PlaybackOutcomeDomain;
+  reason: string | null;
+  http_status: number | null;
+  media_file_id: string | null;
+  media_id: string | null;
+  media_type: MediaType | null;
+  season: number | null;
+  episode: number | null;
+  device_id: string | null;
+  capability_evidence: number;
+  first_observed_at: number;
+  last_observed_at: number;
+}
+
 export interface ExternalSubtitleRow {
   id: string;
   media_file_id: string;

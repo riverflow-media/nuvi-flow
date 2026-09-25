@@ -49,7 +49,8 @@ async function flush(): Promise<void> {
 
 function install(
   fetchMock: ReturnType<typeof vi.fn>,
-  activity: unknown[] = []
+  activity: unknown[] = [],
+  outcomes: unknown[] = []
 ): void {
   document.open();
   document.write(adminHtml('test-csrf').replace(/<script>[\s\S]*<\/script>/, ''));
@@ -63,7 +64,7 @@ function install(
       return json({ requests: [] });
     }
     if (String(input) === '/admin/api/activity') {
-      return json({ activity, generatedAt: Date.now() });
+      return json({ activity, outcomes, generatedAt: Date.now() });
     }
 
     return fetchMock(input, init);
@@ -146,6 +147,23 @@ describe('media details modal', () => {
       createdAt: Date.now() - 30_000,
       lastActivityAt: Date.now(),
       expiresAt: Date.now() + 60_000
+    }], [{
+      playbackId: 'playback-123456789',
+      title: 'Example Movie',
+      mediaType: 'movie',
+      season: null,
+      episode: null,
+      deviceLabel: 'Device 12345678',
+      provider: 'silo',
+      route: 'server_transcode_hls',
+      code: 'delivery_degraded',
+      level: 'warning',
+      failureDomain: 'ambiguous',
+      reason: 'slow_segments',
+      httpStatus: 200,
+      capabilityEvidence: false,
+      firstObservedAt: Date.now(),
+      lastObservedAt: Date.now()
     }]);
     await flush();
 
@@ -159,6 +177,10 @@ describe('media details modal', () => {
     expect(view.textContent).toContain('2160p · HEVC · TRUEHD');
     expect(view.textContent).toContain('1080p · H264 · AAC · SDR');
     expect(view.textContent).toContain('Quality fallback applied · 1080p-high');
+    expect(view.textContent).toContain('Recent server observations');
+    expect(view.textContent).toContain('Delivery degraded');
+    expect(view.textContent).toContain('ambiguous · slow segments');
+    expect(view.textContent).toContain('No automatic negative evidence');
     expect(view.textContent).toContain('Playback playback');
     expect(view.textContent).not.toContain('silo-session');
   });

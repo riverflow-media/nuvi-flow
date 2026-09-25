@@ -32,6 +32,10 @@ import type {
   DeviceCapabilityStore,
   PlaybackDeviceCapabilitySummary
 } from '../services/playback/device-capabilities.js';
+import type {
+  PlaybackOutcome,
+  PlaybackOutcomeStore
+} from '../services/playback/playback-outcomes.js';
 
 const COOKIE_NAME = 'nuviflow_admin';
 
@@ -234,6 +238,34 @@ function publicPlaybackActivity(
   };
 }
 
+function publicPlaybackOutcome(
+  outcome: PlaybackOutcome,
+  file?: AdminMediaFileRow
+): Record<string, unknown> {
+  return {
+    playbackId: outcome.playbackId,
+    title: file
+      ? file.display_title || file.item_title || file.parsed_title || 'Unknown media'
+      : outcome.mediaId || 'External media',
+    mediaType: outcome.mediaType || file?.library_type || null,
+    season: outcome.season,
+    episode: outcome.episode,
+    deviceLabel: outcome.deviceId
+      ? `Device ${outcome.deviceId.slice(-8)}`
+      : 'Unknown device',
+    provider: outcome.provider,
+    route: outcome.route,
+    code: outcome.code,
+    level: outcome.level,
+    failureDomain: outcome.failureDomain,
+    reason: outcome.reason,
+    httpStatus: outcome.httpStatus,
+    capabilityEvidence: false,
+    firstObservedAt: outcome.firstObservedAt,
+    lastObservedAt: outcome.lastObservedAt
+  };
+}
+
 function tmdbFailure(error: unknown, action: string): { status: number; message: string } {
   const detail = error instanceof Error ? error.message : '';
   if (/HTTP (401|403)/i.test(detail)) return { status: 400, message: 'The TMDB API key was rejected. Check the key in Settings and try again.' };
@@ -252,7 +284,8 @@ export function registerAdminRoutes(
   silo: SiloService,
   fallbackAddon: FallbackAddonService,
   playbackActivity: PlaybackActivityService,
-  deviceCapabilities: DeviceCapabilityStore
+  deviceCapabilities: DeviceCapabilityStore,
+  playbackOutcomes: PlaybackOutcomeStore
 ): void {
   app.get('/admin/login', async (request, reply) => {
     if (sessionFor(request, config)) return reply.redirect('/admin');
@@ -300,10 +333,11 @@ export function registerAdminRoutes(
     preHandler: requireAdmin(config)
   }, async (_request, reply) => {
     const activity = await playbackActivity.snapshot();
+    const outcomes = playbackOutcomes.recent(50);
     const fileById = new Map<string, AdminMediaFileRow>();
     const selectFile = database.sqlite.prepare(`${adminFileSelect} WHERE mf.id=?`);
 
-    for (const entry of activity) {
+    for (const entry of [...activity, ...outcomes]) {
       if (!entry.mediaFileId || fileById.has(entry.mediaFileId)) continue;
       const file = selectFile.get(entry.mediaFileId) as AdminMediaFileRow | undefined;
       if (file) fileById.set(entry.mediaFileId, file);
@@ -313,6 +347,10 @@ export function registerAdminRoutes(
       activity: activity.map(entry => publicPlaybackActivity(
         entry,
         entry.mediaFileId ? fileById.get(entry.mediaFileId) : undefined
+      )),
+      outcomes: outcomes.map(outcome => publicPlaybackOutcome(
+        outcome,
+        outcome.mediaFileId ? fileById.get(outcome.mediaFileId) : undefined
       )),
       generatedAt: Date.now()
     });

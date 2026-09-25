@@ -33,6 +33,11 @@ import {
   PlaybackStartCapacityGate,
   type PlaybackStartCapacityReason
 } from './start-capacity.js';
+import {
+  playbackOutcomeRoute,
+  type PlaybackOutcomeInput,
+  type PlaybackOutcomeStore
+} from './playback-outcomes.js';
 
 interface PlaybackLogger {
   info(data: Record<string, unknown>, message: string): void;
@@ -54,6 +59,7 @@ interface PlaybackServiceOptions {
     maxQueued: () => number;
     queueTimeoutMs: () => number;
   };
+  outcomes?: PlaybackOutcomeStore;
 }
 
 export interface PlaybackOrchestrationInput {
@@ -116,6 +122,7 @@ export class PlaybackService {
   private readonly runtimeFallback: PlaybackServiceOptions['runtimeFallback'];
   private readonly capabilityLearning: PlaybackCapabilityLearner;
   private readonly startCapacity: PlaybackStartCapacityGate;
+  private readonly outcomes: PlaybackOutcomeStore | null;
 
   constructor(
     private readonly silo: SiloService,
@@ -128,6 +135,7 @@ export class PlaybackService {
     this.now = options.now ?? Date.now;
     this.runtimeFallback = options.runtimeFallback;
     this.startCapacity = new PlaybackStartCapacityGate(options.startCapacity);
+    this.outcomes = options.outcomes ?? null;
     this.capabilityLearning = new PlaybackCapabilityLearner(
       this.capabilities,
       {
@@ -215,6 +223,23 @@ export class PlaybackService {
     );
 
     if (!observation) return;
+    const route = playbackOutcomeRoute(observation.delivery);
+    if (observation.deliveryOutcomeDue) {
+      this.reportOutcome({
+        playbackId: observation.playbackId,
+        code: 'delivery_observed',
+        provider: 'silo',
+        route,
+        level: 'info',
+        failureDomain: 'none',
+        reason: 'http_response_accepted',
+        httpStatus: observation.status,
+        mediaFileId: observation.mediaFileId,
+        season: observation.season,
+        episode: observation.episode,
+        deviceId: observation.deviceId
+      });
+    }
     if (observation.capabilityEvidenceDue) {
       this.capabilityLearning.recordSuccessfulPlayback(
         observation.playbackId,
@@ -223,6 +248,20 @@ export class PlaybackService {
       );
     }
     if (observation.summaryDue) {
+      this.reportOutcome({
+        playbackId: observation.playbackId,
+        code: 'delivery_degraded',
+        provider: 'silo',
+        route,
+        level: 'warning',
+        failureDomain: 'ambiguous',
+        reason: observation.fallbackReason || 'slow_or_unavailable',
+        httpStatus: observation.status || null,
+        mediaFileId: observation.mediaFileId,
+        season: observation.season,
+        episode: observation.episode,
+        deviceId: observation.deviceId
+      });
       this.logger.warn({
         playback_id: observation.playbackId,
         silo_session_id: observation.siloSessionId,
@@ -340,8 +379,34 @@ export class PlaybackService {
         position_seconds: Number(session.lastPositionSeconds.toFixed(2)),
         replan_ms: this.now() - startedAt
       }, 'Playback quality fallback activated');
+      this.reportOutcome({
+        playbackId: session.playbackId,
+        code: 'quality_fallback_applied',
+        provider: 'silo',
+        route: playbackOutcomeRoute(plan.delivery),
+        level: 'warning',
+        failureDomain: 'transcoder',
+        reason: context.reason,
+        mediaFileId: session.mediaFileId,
+        season: session.season,
+        episode: session.episode,
+        deviceId: session.deviceId
+      });
     } catch (error) {
       this.sessions.completeRuntimeFallback(session.playbackKey, null);
+      this.reportOutcome({
+        playbackId: session.playbackId,
+        code: 'quality_fallback_failed',
+        provider: 'silo',
+        route: playbackOutcomeRoute(session.delivery),
+        level: 'error',
+        failureDomain: 'ambiguous',
+        reason: context.reason,
+        mediaFileId: session.mediaFileId,
+        season: session.season,
+        episode: session.episode,
+        deviceId: session.deviceId
+      });
       this.logger.warn({
         playback_id: session.playbackId,
         silo_session_id: session.siloSessionId,
@@ -441,6 +506,12 @@ export class PlaybackService {
           );
         } catch (error) {
           if (error instanceof PlaybackStartCapacityError) {
+            this.reportOrchestrationOutcome(input, playbackId, {
+              code: 'capacity_unavailable',
+              level: 'warning',
+              failureDomain: 'capacity',
+              reason: error.reason
+            });
             this.logger.warn({
               playback_id: playbackId,
               media_file_id: input.file.id,
@@ -449,10 +520,22 @@ export class PlaybackService {
             }, 'Playback start admission was unavailable');
             throw new PlaybackCapacityError(error.reason);
           }
+          this.reportOrchestrationOutcome(input, playbackId, {
+            code: 'plan_unavailable',
+            level: 'error',
+            failureDomain: 'server',
+            reason: 'silo_start_failed'
+          });
           throw error;
         }
 
         if (!started) {
+          this.reportOrchestrationOutcome(input, playbackId, {
+            code: 'media_unavailable',
+            level: 'error',
+            failureDomain: 'source',
+            reason: 'silo_file_not_resolved'
+          });
           throw new PlaybackOrchestrationError(
             404,
             'This file could not be resolved in Silo.'
@@ -463,6 +546,12 @@ export class PlaybackService {
         let { decision } = started;
         const capacityReason = this.siloCapacityReason(decision);
         if (capacityReason) {
+          this.reportOrchestrationOutcome(input, playbackId, {
+            code: 'capacity_unavailable',
+            level: 'warning',
+            failureDomain: 'capacity',
+            reason: capacityReason
+          });
           await this.terminateSiloSession(
             decision.session_id || null,
             playbackId,
@@ -498,6 +587,12 @@ export class PlaybackService {
           !plan ||
           (!hlsPlan && !progressivePlan)
         ) {
+          this.reportOrchestrationOutcome(input, playbackId, {
+            code: 'plan_unavailable',
+            level: 'error',
+            failureDomain: 'server',
+            reason: decision.terminal?.reason || 'unusable_silo_plan'
+          });
           await this.terminateSiloSession(
             decision.session_id || null,
             playbackId,
@@ -550,6 +645,13 @@ export class PlaybackService {
           startup_ms: this.now() - startupStartedAt,
           fallback_attempt: 0
         }, 'Playback session created');
+        this.reportOrchestrationOutcome(input, playbackId, {
+          code: 'route_selected',
+          route: playbackOutcomeRoute(plan.delivery),
+          level: 'info',
+          failureDomain: 'none',
+          reason: plan.decision_reason || policy.reason
+        });
 
         const targetQuality = policy.mode === 'auto-silo' &&
           plan.delivery === 'server_transcode_hls' &&
@@ -589,8 +691,22 @@ export class PlaybackService {
               fallback_reason: 'startup_latency',
               fallback_quality: targetQuality
             }, 'Playback quality fallback activated');
+            this.reportOrchestrationOutcome(input, playbackId, {
+              code: 'quality_fallback_applied',
+              route: playbackOutcomeRoute(plan.delivery),
+              level: 'warning',
+              failureDomain: 'transcoder',
+              reason: 'startup_latency'
+            });
           } catch (error) {
             fallbackState = 'failed';
+            this.reportOrchestrationOutcome(input, playbackId, {
+              code: 'quality_fallback_failed',
+              route: playbackOutcomeRoute(plan.delivery),
+              level: 'error',
+              failureDomain: 'ambiguous',
+              reason: 'startup_latency'
+            });
             this.logger.warn({
               playback_id: playbackId,
               silo_session_id: decision.session_id || null,
@@ -684,6 +800,46 @@ export class PlaybackService {
     })();
     this.terminationPromises.set(sessionId, termination);
     return termination;
+  }
+
+  private reportOrchestrationOutcome(
+    input: PlaybackOrchestrationInput,
+    playbackId: string,
+    outcome: Omit<
+      PlaybackOutcomeInput,
+      | 'playbackId'
+      | 'provider'
+      | 'mediaFileId'
+      | 'mediaId'
+      | 'mediaType'
+      | 'season'
+      | 'episode'
+      | 'deviceId'
+    >
+  ): void {
+    this.reportOutcome({
+      playbackId,
+      provider: 'silo',
+      mediaFileId: input.file.id,
+      mediaId: input.item.stremio_id,
+      mediaType: input.item.type,
+      season: input.episode?.season ?? null,
+      episode: input.episode?.episode ?? null,
+      deviceId: input.deviceId,
+      ...outcome
+    });
+  }
+
+  private reportOutcome(input: PlaybackOutcomeInput): void {
+    try {
+      this.outcomes?.record(input);
+    } catch (error) {
+      this.logger.warn({
+        playback_id: input.playbackId,
+        outcome_code: input.code,
+        error
+      }, 'Playback outcome could not be recorded');
+    }
   }
 
   private siloCapacityReason(

@@ -24,6 +24,7 @@ import { PlaybackService } from './services/playback/playback-service.js';
 import { FallbackAddonService } from './services/playback/fallback-addon.js';
 import { NetworkProfileStore } from './services/playback/network-profiles.js';
 import { PlaybackActivityService } from './services/playback/playback-activity.js';
+import { PlaybackOutcomeStore } from './services/playback/playback-outcomes.js';
 import { RequestService } from './services/requester.js';
 import { SiloService } from './services/silo-service.js';
 import { SiloFileMappingStore } from './services/silo-file-mappings.js';
@@ -44,6 +45,7 @@ export interface BuiltApp {
   fallbackAddon: FallbackAddonService;
   networkProfiles: NetworkProfileStore;
   playbackActivity: PlaybackActivityService;
+  playbackOutcomes: PlaybackOutcomeStore;
 }
 
 export async function buildApp(config: AppConfig): Promise<BuiltApp> {
@@ -84,6 +86,7 @@ export async function buildApp(config: AppConfig): Promise<BuiltApp> {
   const playbackSessions =
     new PlaybackSessionRegistry();
   const deviceCapabilities = new DeviceCapabilityStore(database);
+  const playbackOutcomes = new PlaybackOutcomeStore(database);
   const playback = new PlaybackService(
     silo,
     playbackSessions,
@@ -100,10 +103,13 @@ export async function buildApp(config: AppConfig): Promise<BuiltApp> {
         maxConcurrent: () => settings.siloMaxConcurrentStarts,
         maxQueued: () => settings.siloMaxQueuedStarts,
         queueTimeoutMs: () => settings.siloStartQueueTimeoutMs
-      }
+      },
+      outcomes: playbackOutcomes
     }
   );
-  const fallbackAddon = new FallbackAddonService(settings, app.log);
+  const fallbackAddon = new FallbackAddonService(settings, app.log, {
+    outcomes: playbackOutcomes
+  });
   const networkProfiles = new NetworkProfileStore(
     database,
     config.streamSecret,
@@ -111,7 +117,8 @@ export async function buildApp(config: AppConfig): Promise<BuiltApp> {
   );
   const playbackActivity = new PlaybackActivityService(
     playbackSessions,
-    fallbackAddon
+    fallbackAddon,
+    { outcomes: playbackOutcomes }
   );
   playback.setFallbackAddon(fallbackAddon);
 
@@ -251,7 +258,8 @@ export async function buildApp(config: AppConfig): Promise<BuiltApp> {
     silo,
     fallbackAddon,
     playbackActivity,
-    deviceCapabilities
+    deviceCapabilities,
+    playbackOutcomes
   );
   app.setNotFoundHandler(async (_request, reply) => reply.code(404).send({ error: 'Not found' }));
   app.setErrorHandler(async (error, request, reply) => {
@@ -273,6 +281,7 @@ export async function buildApp(config: AppConfig): Promise<BuiltApp> {
     playback,
     fallbackAddon,
     networkProfiles,
-    playbackActivity
+    playbackActivity,
+    playbackOutcomes
   };
 }
