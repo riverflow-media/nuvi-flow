@@ -17,6 +17,13 @@ export const siloQualityPreferences = [
 
 export type SiloQualityPreference = typeof siloQualityPreferences[number];
 
+export interface SiloHdrCapabilities {
+  hdr10: boolean;
+  hdr10_plus: boolean;
+  hlg: boolean;
+  dolby_vision_profiles: number[];
+}
+
 export interface SiloPlaybackRequestProfile {
   qualityPreference: SiloQualityPreference;
   clientCapabilities: {
@@ -28,6 +35,7 @@ export interface SiloPlaybackRequestProfile {
     containers: string[];
     max_resolution: string;
     hdr: boolean;
+    hdr_details: SiloHdrCapabilities;
   };
   clientPlaybackContext: {
     form_factor: string;
@@ -40,6 +48,7 @@ export interface SiloPlaybackRequestProfile {
     };
     output: {
       output_context_id: string;
+      hdr_details: SiloHdrCapabilities;
     };
     deliveries: {
       original_http?: SiloDeliveryCapability;
@@ -57,6 +66,7 @@ export interface SiloDeliveryCapability {
   audio_decode_codecs: string[];
   audio_passthrough_codecs: string[];
   max_channels: number;
+  hdr_details: SiloHdrCapabilities;
   subtitles: {
     embedded_text: boolean;
     sidecar_text: boolean;
@@ -215,10 +225,38 @@ export function planSiloPlayback(
     }
   }
 
-  const hdr = supportedCapabilities.some(
-    capability => capability.category === 'hdr' &&
-      ['hdr10', 'hdr10+', 'dolby_vision'].includes(capability.capability)
+  const supportedHdr = new Set(
+    supportedCapabilities
+      .filter(capability => capability.category === 'hdr')
+      .map(capability => capability.capability)
   );
+  const unsupportedHdr = new Set(
+    unsupportedCapabilities
+      .filter(capability => capability.category === 'hdr')
+      .map(capability => capability.capability)
+  );
+  const dolbyVisionProfiles = new Set<number>();
+
+  // Preserve the original broad override as an explicit compatibility choice,
+  // while allowing profile-specific denies to narrow it. New administrators
+  // can declare only the profiles their output actually accepts.
+  if (supportedHdr.has('dolby_vision')) {
+    for (const profile of [5, 7, 8]) dolbyVisionProfiles.add(profile);
+  }
+  for (const profile of [5, 7, 8]) {
+    const capability = `dolby_vision_profile_${profile}`;
+    if (supportedHdr.has(capability)) dolbyVisionProfiles.add(profile);
+    if (unsupportedHdr.has(capability)) dolbyVisionProfiles.delete(profile);
+  }
+
+  const hdrDetails: SiloHdrCapabilities = {
+    hdr10: supportedHdr.has('hdr10'),
+    hdr10_plus: supportedHdr.has('hdr10+'),
+    hlg: supportedHdr.has('hlg'),
+    dolby_vision_profiles: [...dolbyVisionProfiles].sort((a, b) => a - b)
+  };
+  const hdr = hdrDetails.hdr10 || hdrDetails.hdr10_plus || hdrDetails.hlg ||
+    hdrDetails.dolby_vision_profiles.length > 0;
   const videoCodecs = [...supportedVideoCodecs];
   const audioCodecs = [...supportedAudioCodecs];
   const containers = [...supportedContainers];
@@ -274,6 +312,7 @@ export function planSiloPlayback(
     audio_decode_codecs: deliveryAudioCodecs,
     audio_passthrough_codecs: [],
     max_channels: maxChannels,
+    hdr_details: hdrDetails,
     subtitles: {
       embedded_text: false,
       sidecar_text: true,
@@ -324,7 +363,8 @@ export function planSiloPlayback(
         codecs_audio: auto ? [...directAudioCodecs] : audioCodecs,
         containers: auto ? [...directContainers, 'hls'] : ['hls'],
         max_resolution: maxResolution,
-        hdr
+        hdr,
+        hdr_details: hdrDetails
       },
       clientPlaybackContext: {
         form_factor: 'unknown',
@@ -344,7 +384,8 @@ export function planSiloPlayback(
           }
         },
         output: {
-          output_context_id: deviceId
+          output_context_id: deviceId,
+          hdr_details: hdrDetails
         },
         deliveries: auto ? autoDeliveries : { hls }
       }

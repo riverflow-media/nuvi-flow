@@ -251,6 +251,13 @@ interrupt a stream already in progress. Capability changes are included in the
 session key, so a session planned under an older effective capability snapshot
 cannot be incorrectly reused.
 
+HDR overrides are sent to Silo as format-specific protocol-v3 evidence. HDR10,
+HDR10+, HLG, and Dolby Vision profiles are kept distinct instead of being
+collapsed into a generic HDR flag. The broad Dolby Vision control represents
+common profiles 5, 7, and 8; profile-specific Unsupported choices can narrow it.
+Audio passthrough is intentionally not inferred or enabled by a simple override:
+Silo requires exact sink layout evidence before it will honor bitstream output.
+
 For exact-path matching to work, the same media file must have the same container path in Nuvi-Flow and Silo. For example, mount the library as `/media/movies` in both containers rather than `/media/movies` in one and `/movies` in the other.
 
 ### Automatic Radarr and Sonarr requests

@@ -35,6 +35,11 @@ before its image is published.
 - Automatic evidence limited to unambiguous video codec, container, 4K, and
   plain HDR10 traits. Ambiguous failures, audio-track selection, Dolby Vision,
   and HDR10+ base-layer behavior do not create automatic support claims
+- Format-specific protocol-v3 HDR declarations for HDR10, HDR10+, HLG, and
+  explicit Dolby Vision profiles, preventing a single HDR override from
+  overstating every dynamic-range format
+- Audio passthrough remains disabled without Silo's required exact sink-layout
+  evidence; ordinary codec decode/copy overrides do not imply bitstream support
 
 ## Completed demand-aware pause/resume liveness foundation
 

@@ -178,6 +178,11 @@ describe('admin media detail API', () => {
         capability: 'hevc',
         label: 'HEVC / H.265',
         group: 'Video'
+      }, {
+        category: 'hdr',
+        capability: 'dolby_vision_profile_8',
+        label: 'Dolby Vision profile 8',
+        group: 'HDR'
       }])
     });
     expect(listed.body).not.toContain('user-agent');

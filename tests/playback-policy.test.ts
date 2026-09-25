@@ -35,10 +35,24 @@ describe('conservative Silo playback policy', () => {
           codecs_audio: ['aac'],
           containers: ['mp4', 'hls'],
           max_resolution: '2160p',
-          hdr: false
+          hdr: false,
+          hdr_details: {
+            hdr10: false,
+            hdr10_plus: false,
+            hlg: false,
+            dolby_vision_profiles: []
+          }
         },
         clientPlaybackContext: {
-          output: { output_context_id: deviceId },
+          output: {
+            output_context_id: deviceId,
+            hdr_details: {
+              hdr10: false,
+              hdr10_plus: false,
+              hlg: false,
+              dolby_vision_profiles: []
+            }
+          },
           deliveries: {
             original_http: {
               enabled: true,
@@ -191,6 +205,65 @@ describe('conservative Silo playback policy', () => {
         ?.containers
     ).toEqual(['mp4', 'mkv']);
     expect(plan.target.dynamicRange).toBe('hdr');
+    expect(plan.requestProfile.clientCapabilities.hdr_details).toEqual({
+      hdr10: true,
+      hdr10_plus: false,
+      hlg: false,
+      dolby_vision_profiles: []
+    });
+    expect(
+      plan.requestProfile.clientPlaybackContext.deliveries.original_http
+        ?.hdr_details
+    ).toEqual(plan.requestProfile.clientCapabilities.hdr_details);
+    expect(plan.requestProfile.clientPlaybackContext.output.hdr_details)
+      .toEqual(plan.requestProfile.clientCapabilities.hdr_details);
+  });
+
+  it('keeps HDR formats separate and narrows broad Dolby Vision overrides', () => {
+    const capability = (
+      capability: string,
+      supported = true
+    ) => ({
+      category: 'hdr' as const,
+      capability,
+      supported,
+      state: supported ? 'supported' as const : 'unsupported' as const,
+      evidence: 'user_override' as const,
+      confidence: 1,
+      successCount: 0,
+      failureCount: 0,
+      firstObservedAt: 1,
+      lastObservedAt: 1,
+      updatedAt: 1
+    });
+    const plan = planSiloPlayback(
+      { width: 3840, height: 2160 },
+      'auto',
+      deviceId,
+      {
+        deviceId,
+        revision: 'revision-hdr-formats',
+        capabilities: [
+          capability('hdr10'),
+          capability('hlg'),
+          capability('dolby_vision'),
+          capability('dolby_vision_profile_5', false),
+          capability('dolby_vision_profile_8')
+        ]
+      }
+    );
+
+    expect(plan.requestProfile.clientCapabilities).toMatchObject({
+      hdr: true,
+      hdr_details: {
+        hdr10: true,
+        hdr10_plus: false,
+        hlg: true,
+        dolby_vision_profiles: [7, 8]
+      }
+    });
+    expect(plan.requestProfile.clientPlaybackContext.deliveries.hls?.hdr_details)
+      .toEqual(plan.requestProfile.clientCapabilities.hdr_details);
   });
 
   it('uses trusted learned capabilities without pretending they are overrides', () => {
