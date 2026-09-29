@@ -358,6 +358,8 @@ Uploaded branding is stored in the persistent `/app/data` volume.
 
 The password-protected dashboard provides:
 
+- Task-oriented sidebar groups for monitoring, media management, playback, and
+  system configuration
 - Library overview
 - Live playback activity across direct, Silo original/remux/transcode, and AIO
   fallback routes
@@ -388,9 +390,14 @@ The password-protected dashboard provides:
 - Custom addon icon
 - Secure addon URL display and one-click regeneration
 - Running version and Git commit identity in the lower-left server status card
+- General, Requests, Playback, Fallback, and Security settings workspaces with
+  one atomic save action
 
-The larger admin interface organization pass is tracked as a later roadmap item;
-current playback and reliability milestones take priority.
+Settings stay in one form even though they are separated visually. Switching
+workspaces does not discard edits, and submitting **Save all settings** validates
+and saves every workspace together. If a required value is missing in another
+workspace, Nuvi-Flow opens that workspace automatically so the problem is
+visible.
 
 Saved Radarr and Sonarr API keys are never returned to the browser.
 

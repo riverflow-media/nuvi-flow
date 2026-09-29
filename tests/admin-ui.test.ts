@@ -30,6 +30,7 @@ function appState(files = [mediaFile()]) {
     },
     logs: [],
     settings: {
+      addonName: 'Nuvi-Flow',
       baseUrl: 'http://localhost:60500', moviesPath: '/media/movies', tvPath: '/media/tv',
       addonAccessPath: '/addon/test-secure-install-token',
       scanIntervalMinutes: 30, minimumFileSizeMb: 50, streamTokenExpiryHours: 168,
@@ -117,6 +118,94 @@ describe('media details modal', () => {
       .toBeNull();
     expect((document.querySelector('#manifestUrl') as HTMLInputElement).value)
       .toBe('http://localhost:60500/addon/test-secure-install-token/manifest.json');
+  });
+
+  it('groups navigation and Settings into task-oriented sections', async () => {
+    const fetchMock = vi.fn(async (input: string | URL | Request) => {
+      if (String(input) === '/admin/api/state') return json(appState());
+      return json({ error: 'Unexpected request' }, 500);
+    });
+    install(fetchMock);
+    await flush();
+
+    expect([...document.querySelectorAll('.nav-label')].map(node => node.textContent))
+      .toEqual(['Monitor', 'Media', 'Playback', 'System']);
+    expect(document.querySelector('[data-view="dashboard"]')?.getAttribute('aria-current'))
+      .toBe('page');
+
+    document.querySelector<HTMLButtonElement>('[data-view="settings"]')!.click();
+    const tabs = [...document.querySelectorAll<HTMLButtonElement>('[data-settings-tab]')];
+    expect(tabs.map(tab => tab.textContent)).toEqual([
+      'General', 'Requests', 'Playback', 'Fallback', 'Security'
+    ]);
+    expect(document.querySelector<HTMLElement>('[data-settings-panel="general"]')?.hidden)
+      .toBe(false);
+    expect(document.querySelector<HTMLElement>('[data-settings-panel="playback"]')?.hidden)
+      .toBe(true);
+
+    document.querySelector<HTMLButtonElement>('[data-settings-tab="playback"]')!.click();
+    expect(document.querySelector('[data-settings-tab="playback"]')?.getAttribute('aria-selected'))
+      .toBe('true');
+    expect(document.querySelector<HTMLElement>('[data-settings-panel="general"]')?.hidden)
+      .toBe(true);
+    expect(document.querySelector<HTMLElement>('[data-settings-panel="playback"]')?.hidden)
+      .toBe(false);
+    expect(document.querySelector('[data-view="settings"]')?.getAttribute('aria-current'))
+      .toBe('page');
+  });
+
+  it('supports keyboard Settings navigation and reveals an invalid hidden field', async () => {
+    const fetchMock = vi.fn(async (input: string | URL | Request) => {
+      if (String(input) === '/admin/api/state') return json(appState());
+      return json({ error: 'Unexpected request' }, 500);
+    });
+    install(fetchMock);
+    await flush();
+
+    const general = document.querySelector<HTMLButtonElement>('[data-settings-tab="general"]')!;
+    general.focus();
+    general.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
+    expect(document.activeElement).toBe(
+      document.querySelector('[data-settings-tab="requests"]')
+    );
+    expect(document.querySelector<HTMLElement>('[data-settings-panel="requests"]')?.hidden)
+      .toBe(false);
+
+    const username = document.querySelector<HTMLInputElement>('#adminUsername')!;
+    username.value = '';
+    username.dispatchEvent(new Event('invalid', { cancelable: true }));
+    expect(document.querySelector<HTMLElement>('[data-settings-panel="security"]')?.hidden)
+      .toBe(false);
+    expect(document.querySelector('[data-settings-tab="security"]')?.getAttribute('aria-selected'))
+      .toBe('true');
+  });
+
+  it('saves values from every Settings panel in one request', async () => {
+    let saved: Record<string, unknown> | undefined;
+    const fetchMock = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      if (String(input) === '/admin/api/state') return json(appState());
+      if (String(input) === '/admin/api/settings' && init?.method === 'PUT') {
+        saved = JSON.parse(String(init.body));
+        return json({ settings: { ...appState().settings, ...saved } });
+      }
+      return json({ error: 'Unexpected request' }, 500);
+    });
+    install(fetchMock);
+    await flush();
+
+    document.querySelector<HTMLSelectElement>('#siloTranscodeQuality')!.value = '1080p-high';
+    document.querySelector<HTMLInputElement>('#fallbackAddonMaxAttempts')!.value = '12';
+    document.querySelector<HTMLInputElement>('#newPassword')!.value = 'replacement-password';
+    document.querySelector<HTMLFormElement>('#settingsForm')!.requestSubmit();
+    await flush();
+
+    expect(saved).toMatchObject({
+      addonName: 'Nuvi-Flow',
+      siloTranscodeQuality: '1080p-high',
+      fallbackAddonMaxAttempts: '12',
+      newPassword: 'replacement-password'
+    });
+    expect(document.querySelector('#toast')?.textContent).toBe('Settings saved');
   });
 
   it('shows live playback decisions in the Activity section', async () => {

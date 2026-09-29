@@ -242,13 +242,19 @@ the declared SDR target.
   any such signal can influence Auto; one ambiguous failure must never blacklist
   a capability
 
-## Later interface work
+## Completed admin interface organization foundation
 
-- Reorganize the admin dashboard and settings into clearer task-oriented
-  sections
-- Keep system identity and health information together
-- Improve responsive navigation without mixing UI restructuring into playback
-  reliability patches
+- Group the main dashboard navigation into Monitor, Media, Playback, and System
+  tasks while keeping the server state, version, and Git revision together
+- Divide the previously long Settings page into General, Requests, Playback,
+  Fallback, and Security workspaces without changing setting names, defaults,
+  API payloads, or runtime behavior
+- Keep all workspaces inside one atomic form so switching sections preserves
+  unsaved edits and one action saves the complete configuration
+- Open the correct hidden workspace when browser validation finds an invalid
+  control, avoiding an invisible or unfocusable form error
+- Provide keyboard-operable tabs, explicit selected/current-page state, and
+  horizontally scrollable navigation on narrow screens
 
 ## Optional future features
 
