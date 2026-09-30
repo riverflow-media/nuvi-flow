@@ -62,6 +62,7 @@ describe('PlaybackActivityService', () => {
       provider: 'silo',
       route: 'server_transcode_hls',
       state: 'starting',
+      stoppable: true,
       target: {
         height: 1080,
         videoCodec: 'h264',
@@ -121,6 +122,7 @@ describe('PlaybackActivityService', () => {
       provider: 'nuvi-flow',
       route: 'direct_file',
       state: 'streaming',
+      stoppable: false,
       target: {
         quality: '2160p',
         height: 2160,
@@ -172,6 +174,7 @@ describe('PlaybackActivityService', () => {
       provider: 'fallback-addon',
       route: 'external_direct_http',
       state: 'streaming',
+      stoppable: true,
       target: { height: 2160, bitrateMbps: 18 },
       candidate: { attempt: 2, count: 10 }
     }]);

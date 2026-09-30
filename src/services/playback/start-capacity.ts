@@ -96,6 +96,19 @@ export class PlaybackStartCapacityGate {
     };
   }
 
+  snapshot(): {
+    active: number;
+    queued: number;
+    maxConcurrent: number;
+    maxQueued: number;
+  } {
+    return {
+      ...this.counts(),
+      maxConcurrent: this.maxConcurrent(),
+      maxQueued: this.maxQueued()
+    };
+  }
+
   private start<T>(queued: Omit<QueuedStart<T>, 'timer'>): void {
     this.active += 1;
     void Promise.resolve()

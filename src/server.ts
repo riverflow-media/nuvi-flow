@@ -97,7 +97,8 @@ export async function buildApp(config: AppConfig): Promise<BuiltApp> {
         enabled: () => settings.siloRuntimeFallbackEnabled,
         slowSegmentMs: () => settings.siloRuntimeFallbackSlowSegmentMs,
         slowSegmentCount: () => settings.siloRuntimeFallbackSlowSegmentCount,
-        startupMs: () => settings.siloRuntimeFallbackStartupMs
+        startupMs: () => settings.siloRuntimeFallbackStartupMs,
+        maxAttempts: () => settings.siloRuntimeFallbackMaxAttempts
       },
       startCapacity: {
         maxConcurrent: () => settings.siloMaxConcurrentStarts,
@@ -257,6 +258,7 @@ export async function buildApp(config: AppConfig): Promise<BuiltApp> {
     config,
     silo,
     fallbackAddon,
+    playback,
     playbackActivity,
     deviceCapabilities,
     playbackOutcomes

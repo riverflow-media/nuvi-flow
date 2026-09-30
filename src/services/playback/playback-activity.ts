@@ -36,6 +36,7 @@ export interface PlaybackActivityRecord {
   provider: 'nuvi-flow' | 'silo' | 'fallback-addon';
   route: PlaybackActivityRoute;
   state: PlaybackActivityState;
+  stoppable: boolean;
   season: number | null;
   episode: number | null;
   target: PlaybackActivityTarget;
@@ -43,6 +44,9 @@ export interface PlaybackActivityRecord {
     state: 'ready' | 'pending' | 'completed' | 'failed';
     reason: 'startup_latency' | 'slow_segments' | 'status_failures' | null;
     targetQuality: string;
+    lastAppliedQuality: string | null;
+    attempts: number;
+    maxAttempts: number;
   } | null;
   candidate: {
     attempt: number;
@@ -255,6 +259,7 @@ export class PlaybackActivityService {
           session.mediaRequestCount,
           transfer
         ),
+        stoppable: true,
         season: session.season,
         episode: session.episode,
         target: {
@@ -270,7 +275,12 @@ export class PlaybackActivityService {
           ? {
               state: session.runtimeFallback.state,
               reason: session.runtimeFallback.reason,
-              targetQuality: session.runtimeFallback.targetQuality
+              targetQuality: session.runtimeFallback.targetQuality,
+              lastAppliedQuality:
+                session.runtimeFallback.lastAppliedQuality ?? null,
+              attempts: session.runtimeFallback.attempts ??
+                (session.runtimeFallback.state === 'completed' ? 1 : 0),
+              maxAttempts: session.runtimeFallback.maxAttempts ?? 1
             }
           : null,
         candidate: null,
@@ -300,6 +310,7 @@ export class PlaybackActivityService {
           session.candidateVerified ? 1 : 0,
           transfer
         ),
+        stoppable: true,
         season: session.season,
         episode: session.episode,
         target: {
@@ -335,6 +346,7 @@ export class PlaybackActivityService {
           now - activity.lastActivityAt <= this.idleWindowMs
           ? 'streaming'
           : 'idle',
+        stoppable: false,
         season: activity.season,
         episode: activity.episode,
         target: {

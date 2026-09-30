@@ -38,6 +38,12 @@ describe('playback start capacity gate', () => {
 
     await vi.waitFor(() => expect(order).toEqual(['first']));
     expect(gate.counts()).toEqual({ active: 1, queued: 2 });
+    expect(gate.snapshot()).toEqual({
+      active: 1,
+      queued: 2,
+      maxConcurrent: 1,
+      maxQueued: 3
+    });
     firstRelease.resolve();
     await vi.waitFor(() => expect(order).toEqual(['first', 'second']));
     secondRelease.resolve();

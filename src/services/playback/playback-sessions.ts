@@ -14,6 +14,10 @@ export interface PlaybackRuntimeFallback {
   targetQuality: SiloQualityPreference;
   state: 'ready' | 'pending' | 'completed' | 'failed';
   reason: 'startup_latency' | 'slow_segments' | 'status_failures' | null;
+  attempts: number;
+  maxAttempts: number;
+  appliedQualities: SiloQualityPreference[];
+  lastAppliedQuality: SiloQualityPreference | null;
 }
 
 export interface PlaybackKeyParts {
@@ -116,6 +120,7 @@ export interface PlaybackSessionResult {
 
 export type PlaybackSessionRetirementReason =
   | 'fallback_selected'
+  | 'admin_stopped'
   | 'expired'
   | 'shutdown'
   | 'superseded';
@@ -539,6 +544,16 @@ export class PlaybackSessionRegistry {
     if (!session?.runtimeFallback || session.runtimeFallback.state !== 'ready') {
       return null;
     }
+    const attempts = session.runtimeFallback.attempts ?? 0;
+    const maxAttempts = session.runtimeFallback.maxAttempts ?? 1;
+    if (attempts >= maxAttempts) {
+      session.runtimeFallback.state = 'completed';
+      return null;
+    }
+    session.runtimeFallback.attempts = attempts + 1;
+    session.runtimeFallback.maxAttempts = maxAttempts;
+    session.runtimeFallback.appliedQualities ??= [];
+    session.runtimeFallback.lastAppliedQuality ??= null;
     session.runtimeFallback.state = 'pending';
     session.runtimeFallback.reason = reason;
     return session;
@@ -552,6 +567,7 @@ export class PlaybackSessionRegistry {
       delivery: string;
       siloSessionId?: string | null;
       capabilityClaims?: PlaybackCapabilityClaim[];
+      nextTargetQuality?: SiloQualityPreference | null;
     } | null
   ): boolean {
     const session = this.activeSessions.get(playbackKey);
@@ -580,9 +596,27 @@ export class PlaybackSessionRegistry {
     session.successfulSegmentCount = 0;
     session.cleanMediaStartedAt = 0;
     session.capabilityEvidenceRecorded = false;
+    session.consecutiveSlowSegmentCount = 0;
+    session.consecutiveFailureCount = 0;
     if (result.siloSessionId) session.siloSessionId = result.siloSessionId;
     session.runtimeFallback.plan = result.plan;
-    session.runtimeFallback.state = 'completed';
+    session.runtimeFallback.appliedQualities ??= [];
+    session.runtimeFallback.appliedQualities.push(
+      session.runtimeFallback.targetQuality
+    );
+    session.runtimeFallback.lastAppliedQuality =
+      session.runtimeFallback.targetQuality;
+    if (
+      result.nextTargetQuality &&
+      (session.runtimeFallback.attempts ?? 0) <
+        (session.runtimeFallback.maxAttempts ?? 1)
+    ) {
+      session.runtimeFallback.targetQuality = result.nextTargetQuality;
+      session.runtimeFallback.state = 'ready';
+      session.runtimeFallback.reason = null;
+    } else {
+      session.runtimeFallback.state = 'completed';
+    }
     return true;
   }
 
@@ -621,6 +655,18 @@ export class PlaybackSessionRegistry {
   async activeSnapshot(): Promise<PlaybackSession[]> {
     await this.cleanupExpired();
     return [...this.activeSessions.values()].map(session => ({ ...session }));
+  }
+
+  async retireByPlaybackId(
+    playbackId: string,
+    reason: PlaybackSessionRetirementReason = 'admin_stopped'
+  ): Promise<boolean> {
+    for (const [key, session] of this.activeSessions) {
+      if (session.playbackId !== playbackId) continue;
+      await this.retireSession(key, session, reason);
+      return true;
+    }
+    return false;
   }
 
   playbackIdForUpstreamPath(pathname: string): string | null {

@@ -36,6 +36,7 @@ import type {
   PlaybackOutcome,
   PlaybackOutcomeStore
 } from '../services/playback/playback-outcomes.js';
+import type { PlaybackService } from '../services/playback/playback-service.js';
 
 const COOKIE_NAME = 'nuviflow_admin';
 
@@ -225,6 +226,7 @@ function publicPlaybackActivity(
     provider: activity.provider,
     route: activity.route,
     state: activity.state,
+    stoppable: activity.stoppable,
     source,
     target: {
       ...activity.target,
@@ -287,6 +289,7 @@ export function registerAdminRoutes(
   config: AppConfig,
   silo: SiloService,
   fallbackAddon: FallbackAddonService,
+  playback: PlaybackService,
   playbackActivity: PlaybackActivityService,
   deviceCapabilities: DeviceCapabilityStore,
   playbackOutcomes: PlaybackOutcomeStore
@@ -338,6 +341,7 @@ export function registerAdminRoutes(
   }, async (_request, reply) => {
     const activity = await playbackActivity.snapshot();
     const outcomes = playbackOutcomes.recent(50);
+    const operations = playback.operationsSnapshot();
     const fileById = new Map<string, AdminMediaFileRow>();
     const selectFile = database.sqlite.prepare(`${adminFileSelect} WHERE mf.id=?`);
 
@@ -356,8 +360,40 @@ export function registerAdminRoutes(
         outcome,
         outcome.mediaFileId ? fileById.get(outcome.mediaFileId) : undefined
       )),
+      operations: {
+        silo: {
+          activeSessions: operations.sessions.active,
+          pendingSessions: operations.sessions.pending,
+          activeStarts: operations.starts.active,
+          queuedStarts: operations.starts.queued,
+          maxConcurrentStarts: operations.starts.maxConcurrent,
+          maxQueuedStarts: operations.starts.maxQueued
+        },
+        fallback: fallbackAddon.counts()
+      },
       generatedAt: Date.now()
     });
+  });
+
+  app.post('/admin/api/activity/:playbackId/stop', {
+    preHandler: requireAdmin(config, true)
+  }, async (request, reply) => {
+    const { playbackId } = request.params as { playbackId: string };
+    if (!playbackId || playbackId.length > 80 ||
+      !/^[a-z0-9_-]+$/i.test(playbackId)) {
+      return reply.code(400).send({ error: 'Invalid playback ID.' });
+    }
+    const stoppedSilo = await playback.stopPlayback(playbackId);
+    const stoppedFallback = fallbackAddon.stopPlayback(playbackId);
+    if (!stoppedSilo && !stoppedFallback) {
+      return reply.code(404).send({ error: 'Playback session is no longer active.' });
+    }
+    request.log.info({
+      playback_id: playbackId,
+      provider: stoppedSilo ? 'silo' : 'fallback_addon',
+      retirement_reason: 'admin_stopped'
+    }, 'Playback session stopped by administrator');
+    return reply.send({ ok: true });
   });
 
   app.get('/admin/api/devices', {
@@ -855,6 +891,7 @@ export function registerAdminRoutes(
       ['siloRuntimeFallbackSlowSegmentMs', 1000],
       ['siloRuntimeFallbackSlowSegmentCount', 2],
       ['siloRuntimeFallbackStartupMs', 5000],
+      ['siloRuntimeFallbackMaxAttempts', 1],
       ['siloMaxConcurrentStarts', 1],
       ['siloMaxQueuedStarts', 0],
       ['siloStartQueueTimeoutMs', 1000],
@@ -1005,6 +1042,7 @@ export function registerAdminRoutes(
       ['siloRuntimeFallbackSlowSegmentMs', 1000, 15_000],
       ['siloRuntimeFallbackSlowSegmentCount', 2, 10],
       ['siloRuntimeFallbackStartupMs', 5000, 60_000],
+      ['siloRuntimeFallbackMaxAttempts', 1, 3],
       ['siloMaxConcurrentStarts', 1, 8],
       ['siloMaxQueuedStarts', 0, 32],
       ['siloStartQueueTimeoutMs', 1000, 60_000]

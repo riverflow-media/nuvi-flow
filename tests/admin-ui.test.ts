@@ -209,8 +209,16 @@ describe('media details modal', () => {
   });
 
   it('shows live playback decisions in the Activity section', async () => {
-    const fetchMock = vi.fn(async (input: string | URL | Request) => {
+    const fetchMock = vi.fn(async (
+      input: string | URL | Request,
+      init?: RequestInit
+    ) => {
       if (String(input) === '/admin/api/state') return json(appState());
+      if (
+        String(input) ===
+          '/admin/api/activity/playback-123456789/stop' &&
+        init?.method === 'POST'
+      ) return json({ ok: true });
       return json({ error: 'Unexpected request' }, 500);
     });
     install(fetchMock, [{
@@ -223,6 +231,7 @@ describe('media details modal', () => {
       provider: 'silo',
       route: 'server_transcode_hls',
       state: 'streaming',
+      stoppable: true,
       source: {
         kind: 'local', height: 2160, videoCodec: 'hevc', audioCodec: 'truehd'
       },
@@ -230,7 +239,9 @@ describe('media details modal', () => {
         height: 1080, videoCodec: 'h264', audioCodec: 'aac', dynamicRange: 'sdr'
       },
       fallback: {
-        state: 'completed', reason: 'slow_segments', targetQuality: '1080p-high'
+        state: 'completed', reason: 'slow_segments',
+        targetQuality: '1080p-medium', lastAppliedQuality: '1080p-high',
+        attempts: 2, maxAttempts: 2
       },
       candidate: null,
       createdAt: Date.now() - 30_000,
@@ -265,13 +276,23 @@ describe('media details modal', () => {
     expect(view.textContent).toContain('Silo transcode');
     expect(view.textContent).toContain('2160p · HEVC · TRUEHD');
     expect(view.textContent).toContain('1080p · H264 · AAC · SDR');
-    expect(view.textContent).toContain('Quality fallback applied · 1080p-high');
+    expect(view.textContent).toContain('Quality reduced 2 of 2 · 1080p-high');
+    expect(view.textContent).toContain('Stop stream');
     expect(view.textContent).toContain('Recent server observations');
     expect(view.textContent).toContain('Delivery degraded');
     expect(view.textContent).toContain('ambiguous · slow segments');
     expect(view.textContent).toContain('No automatic negative evidence');
     expect(view.textContent).toContain('Playback playback');
     expect(view.textContent).not.toContain('silo-session');
+
+    document.querySelector<HTMLButtonElement>('[data-stop-playback]')!.click();
+    await flush();
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/admin/api/activity/playback-123456789/stop',
+      expect.objectContaining({ method: 'POST' })
+    );
+    expect(document.querySelector('#toast')?.textContent)
+      .toBe('Playback session stopped');
   });
 
   it('loads pseudonymous devices on demand and saves a manual override', async () => {

@@ -44,6 +44,7 @@ export interface AppConfig {
   siloRuntimeFallbackSlowSegmentMs: number;
   siloRuntimeFallbackSlowSegmentCount: number;
   siloRuntimeFallbackStartupMs: number;
+  siloRuntimeFallbackMaxAttempts: number;
   siloMaxConcurrentStarts: number;
   siloMaxQueuedStarts: number;
   siloStartQueueTimeoutMs: number;
@@ -138,6 +139,11 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
       20_000,
       5000
     )),
+    siloRuntimeFallbackMaxAttempts: Math.min(3, Math.floor(numberValue(
+      env.SILO_RUNTIME_FALLBACK_MAX_ATTEMPTS,
+      2,
+      1
+    ))),
     siloMaxConcurrentStarts: Math.floor(numberValue(
       env.SILO_MAX_CONCURRENT_STARTS,
       2,

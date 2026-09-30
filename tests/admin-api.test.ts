@@ -112,6 +112,7 @@ describe('admin media detail API', () => {
       provider: 'nuvi-flow',
       route: 'direct_file',
       state: 'streaming',
+      stoppable: false,
       source: {
         kind: 'local',
         height: 1080,
@@ -124,6 +125,17 @@ describe('admin media detail API', () => {
         audioCodec: 'aac'
       }
     }]);
+    expect(response.json().operations).toMatchObject({
+      silo: {
+        activeSessions: 0,
+        pendingSessions: 0,
+        activeStarts: 0,
+        queuedStarts: 0,
+        maxConcurrentStarts: 2,
+        maxQueuedStarts: 4
+      },
+      fallback: { active: 0, transfers: 0 }
+    });
     expect(response.json().outcomes).toMatchObject([{
       playbackId: transfer.playbackId,
       title: 'Example Movie',
@@ -139,6 +151,36 @@ describe('admin media detail API', () => {
     expect(response.body).not.toContain('upstream');
 
     transfer.finish();
+  });
+
+  it('requires CSRF and stops only an active playback ID', async () => {
+    const stopSilo = vi.spyOn(built.playback, 'stopPlayback')
+      .mockResolvedValue(true);
+    const stopFallback = vi.spyOn(built.fallbackAddon, 'stopPlayback')
+      .mockReturnValue(false);
+    const playbackId = '11111111-1111-4111-8111-111111111111';
+
+    const noCsrf = await built.app.inject({
+      method: 'POST',
+      url: `/admin/api/activity/${playbackId}/stop`,
+      headers: { cookie }
+    });
+    expect(noCsrf.statusCode).toBe(403);
+
+    const stopped = await request(
+      'POST',
+      `/admin/api/activity/${playbackId}/stop`
+    );
+    expect(stopped.statusCode).toBe(200);
+    expect(stopSilo).toHaveBeenCalledWith(playbackId);
+    expect(stopFallback).toHaveBeenCalledWith(playbackId);
+
+    stopSilo.mockResolvedValue(false);
+    const gone = await request(
+      'POST',
+      `/admin/api/activity/${playbackId}/stop`
+    );
+    expect(gone.statusCode).toBe(404);
   });
 
   it('lists pseudonymous devices and applies validated future-playback overrides', async () => {
@@ -303,14 +345,16 @@ describe('admin media detail API', () => {
       siloRuntimeFallbackEnabled: 'false',
       siloRuntimeFallbackSlowSegmentMs: '3250',
       siloRuntimeFallbackSlowSegmentCount: '4',
-      siloRuntimeFallbackStartupMs: '25000'
+      siloRuntimeFallbackStartupMs: '25000',
+      siloRuntimeFallbackMaxAttempts: '3'
     });
     expect(saved.statusCode).toBe(200);
     expect(saved.json().settings).toMatchObject({
       siloRuntimeFallbackEnabled: false,
       siloRuntimeFallbackSlowSegmentMs: 3250,
       siloRuntimeFallbackSlowSegmentCount: 4,
-      siloRuntimeFallbackStartupMs: 25000
+      siloRuntimeFallbackStartupMs: 25000,
+      siloRuntimeFallbackMaxAttempts: 3
     });
 
     const invalid = await request('PUT', '/admin/api/settings', {
@@ -318,6 +362,12 @@ describe('admin media detail API', () => {
       siloRuntimeFallbackSlowSegmentCount: '1'
     });
     expect(invalid.statusCode).toBe(400);
+
+    const tooMany = await request('PUT', '/admin/api/settings', {
+      ...currentSettings,
+      siloRuntimeFallbackMaxAttempts: '4'
+    });
+    expect(tooMany.statusCode).toBe(400);
   });
 
   it('validates and persists bounded Silo start-admission controls', async () => {

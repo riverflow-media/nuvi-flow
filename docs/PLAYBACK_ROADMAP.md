@@ -150,23 +150,24 @@ the declared SDR target.
   preventing one slow connection from permanently downgrading a device
 - The additive SQLite table uses the verified pre-migration backup path
 
-### Completed bounded runtime quality fallback
+### Completed adaptive playback operations
 
 - Auto HLS transcodes use observable startup latency, consecutive slow segment
   header waits, and repeated upstream failures; no encoder FPS or GPU metric is
   invented when protocol v3 does not provide one
-- Silo-advertised quality rungs determine one materially cheaper replan: a
-  struggling 4K plan prefers 1080p-high, while 1080p prefers 1080p-medium when
-  those rungs are available
+- Silo-advertised quality rungs determine each materially cheaper replan: a
+  struggling 4K plan prefers a viable 1080p rung, while 1080p steps through
+  cheaper server-provided rungs when they are available
 - HLS media-sequence and segment-duration data provide an approximate source
   position so the replan resumes near the active segment
-- The replan is single-flight and capped at one attempt per playback session;
-  successful, failed, and unavailable fallbacks cannot create retry loops
+- Each replan is single-flight. Successful steps clear the prior slow/failure
+  streak, failed replans stop, repeated rungs are excluded, and the configurable
+  1–3 attempt cap prevents retry loops
 - Existing signed tokens resolve to the replacement session path, keeping
   manifest refresh and subsequent segment requests behind Nuvi-Flow
-- Thresholds and the feature toggle are configurable in the admin dashboard;
-  fixed-quality requests, original HTTP, remux, and fallback-addon playback are
-  unchanged
+- Thresholds, feature toggle, and attempt cap are configurable in the admin
+  dashboard; fixed-quality requests, original HTTP, remux, and fallback-addon
+  playback are unchanged
 - A successful AIO selection retires the exact matching Silo session before the
   fallback response is returned. Replaced, expired, and shutdown sessions use
   the same authenticated cleanup path
@@ -174,6 +175,12 @@ the declared SDR target.
   result is stopped rather than leaving an obsolete FFmpeg workload running
 - Cleanup is idempotent and scoped by device, media file, profile, mode, and
   episode context; unrelated viewers and playback requests are never retired
+- Activity exposes sanitized Silo-session, start-admission, queue, and AIO proxy
+  counts so operators can distinguish a playback problem from queued control
+  work without exposing server credentials or internal URLs
+- Authenticated stop controls retire one exact Silo or AIO playback ID. Silo
+  uses the normal server stop API, while AIO cancellation aborts active upstream
+  proxy reads; expiry and shutdown use the same cleanup ownership
 
 ### Completed playback activity foundation
 
@@ -189,7 +196,7 @@ the declared SDR target.
 - Distinguish starting, streaming, and idle/paused activity using actual proxy
   transfers and recent media requests; do not claim player state events that
   Nuvio/Stremio does not provide
-- Keep activity ephemeral and read-only. Signed token IDs, raw device inputs,
+- Keep activity ephemeral and operationally scoped. Signed token IDs, raw device inputs,
   file paths, upstream URLs, internal Silo session IDs, and credentials never
   enter the admin response
 - Poll only while the Activity view is open, while retaining a manual refresh

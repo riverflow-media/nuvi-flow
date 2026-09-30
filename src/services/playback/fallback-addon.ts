@@ -442,6 +442,8 @@ export class FallbackAddonService {
   private readonly pending = new Map<string, Promise<unknown>>();
   private readonly sessionsById = new Map<string, FallbackPlaybackSession>();
   private readonly sessionIdsByKey = new Map<string, string>();
+  private readonly activeFetches = new Map<string, Set<AbortController>>();
+  private readonly stoppedSessionIds = new Set<string>();
   private readonly outcomes: PlaybackOutcomeStore | null;
 
   constructor(
@@ -466,8 +468,12 @@ export class FallbackAddonService {
     if (this.cleanupTimer) clearInterval(this.cleanupTimer);
     this.cache.clear();
     this.pending.clear();
-    this.sessionsById.clear();
-    this.sessionIdsByKey.clear();
+    for (const id of [...this.sessionsById.keys()]) this.removeSession(id);
+    for (const controllers of this.activeFetches.values()) {
+      for (const controller of controllers) controller.abort();
+    }
+    this.activeFetches.clear();
+    this.stoppedSessionIds.clear();
   }
 
   shouldTryForLocal(
@@ -638,18 +644,39 @@ export class FallbackAddonService {
     });
   }
 
+  stopPlayback(playbackId: string): boolean {
+    for (const [id, session] of this.sessionsById) {
+      if (session.playbackId !== playbackId) continue;
+      this.removeSession(id);
+      return true;
+    }
+    return false;
+  }
+
+  counts(): { active: number; transfers: number } {
+    this.cleanupExpired();
+    let transfers = 0;
+    for (const controllers of this.activeFetches.values()) {
+      transfers += controllers.size;
+    }
+    return { active: this.sessionsById.size, transfers };
+  }
+
   async fetchMedia(session: FallbackPlaybackSession, init: RequestInit): Promise<Response> {
     const deadline = this.now() + (this.settings.fallbackAddonStartupBudgetMs || 15_000);
     let lastFailure = 'unavailable';
     for (
       let index = session.candidateIndex;
-      index < session.candidates.length && this.now() < deadline;
+      index < session.candidates.length &&
+        this.now() < deadline &&
+        !this.stoppedSessionIds.has(session.id);
       index += 1
     ) {
       const candidate = session.candidates[index]!;
       try {
         const remaining = deadline - this.now();
         let response = await this.fetchCandidate(
+          session.id,
           candidate,
           init,
           Math.max(1, Math.min(MEDIA_CANDIDATE_TIMEOUT_MS, remaining))
@@ -732,6 +759,9 @@ export class FallbackAddonService {
         this.logCandidateFailure(session, index, lastFailure);
       }
     }
+    if (this.stoppedSessionIds.has(session.id)) {
+      throw new Error('Fallback playback was stopped.');
+    }
     this.recordOutcome(
       session,
       'upstream_unavailable',
@@ -744,11 +774,28 @@ export class FallbackAddonService {
   }
 
   private async fetchCandidate(
+    sessionId: string,
     candidate: FallbackCandidate,
     init: RequestInit,
     timeoutMs: number
   ): Promise<Response> {
     const controller = new AbortController();
+    const controllers = this.activeFetches.get(sessionId) ?? new Set();
+    controllers.add(controller);
+    this.activeFetches.set(sessionId, controllers);
+    const sourceSignal = init.signal;
+    const abortFromSource = () => controller.abort(sourceSignal?.reason);
+    if (sourceSignal?.aborted) abortFromSource();
+    else sourceSignal?.addEventListener('abort', abortFromSource, { once: true });
+    let released = false;
+    const release = () => {
+      if (released) return;
+      released = true;
+      sourceSignal?.removeEventListener('abort', abortFromSource);
+      const active = this.activeFetches.get(sessionId);
+      active?.delete(controller);
+      if (active?.size === 0) this.activeFetches.delete(sessionId);
+    };
     const timeout = setTimeout(() => controller.abort(), timeoutMs);
     let target = candidate.url;
     try {
@@ -763,13 +810,49 @@ export class FallbackAddonService {
           signal: controller.signal,
           redirect: 'manual'
         });
-        if (![301, 302, 303, 307, 308].includes(response.status)) return response;
+        if (![301, 302, 303, 307, 308].includes(response.status)) {
+          clearTimeout(timeout);
+          if (!response.body) {
+            release();
+            return response;
+          }
+          const reader = response.body.getReader();
+          const body = new ReadableStream<Uint8Array>({
+            async pull(streamController) {
+              try {
+                const result = await reader.read();
+                if (result.done) {
+                  release();
+                  streamController.close();
+                } else {
+                  streamController.enqueue(result.value);
+                }
+              } catch (error) {
+                release();
+                streamController.error(error);
+              }
+            },
+            async cancel(reason) {
+              controller.abort(reason);
+              await reader.cancel(reason).catch(() => undefined);
+              release();
+            }
+          });
+          return new Response(body, {
+            status: response.status,
+            statusText: response.statusText,
+            headers: response.headers
+          });
+        }
         const location = response.headers.get('location');
         await response.body?.cancel();
         if (!location) throw new Error('Fallback stream redirect is invalid.');
         target = new URL(location, target).toString();
       }
       throw new Error('Fallback stream redirected too many times.');
+    } catch (error) {
+      release();
+      throw error;
     } finally {
       clearTimeout(timeout);
     }
@@ -1022,6 +1105,18 @@ export class FallbackAddonService {
   }
 
   private removeSession(id: string): void {
+    if (this.sessionsById.has(id) || this.activeFetches.has(id)) {
+      this.stoppedSessionIds.add(id);
+      if (this.stoppedSessionIds.size > 1000) {
+        const oldest = this.stoppedSessionIds.values().next().value;
+        if (oldest) this.stoppedSessionIds.delete(oldest);
+      }
+    }
+    const controllers = this.activeFetches.get(id);
+    if (controllers) {
+      for (const controller of controllers) controller.abort();
+      this.activeFetches.delete(id);
+    }
     this.sessionsById.delete(id);
     for (const [key, value] of this.sessionIdsByKey) {
       if (value === id) this.sessionIdsByKey.delete(key);

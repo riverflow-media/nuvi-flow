@@ -41,4 +41,16 @@ describe('runtime quality fallback selection', () => {
     current.available_qualities![0]!.bitrate_kbps = 6000;
     expect(selectRuntimeFallbackQuality(current)).toBeNull();
   });
+
+  it('steps through distinct server-advertised rungs without repeating one', () => {
+    const current = plan(1080, [
+      '1080p-high', '1080p-medium', '1080p-low', '720p-high'
+    ]);
+    expect(selectRuntimeFallbackQuality(current, ['1080p-medium']))
+      .toBe('1080p-low');
+    expect(selectRuntimeFallbackQuality(
+      plan(720, ['720p-medium', '480p']),
+      ['720p-medium']
+    )).toBe('480p');
+  });
 });

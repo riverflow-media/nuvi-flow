@@ -53,6 +53,7 @@ interface PlaybackServiceOptions {
     slowSegmentMs: () => number;
     slowSegmentCount: () => number;
     startupMs: () => number;
+    maxAttempts?: () => number;
   };
   startCapacity?: {
     maxConcurrent: () => number;
@@ -332,6 +333,9 @@ export class PlaybackService {
     if (!context || !session.siloSessionId) return;
     const previousSessionId = session.siloSessionId;
     const startedAt = this.now();
+    const fallbackAttempt = context.attempts ?? 1;
+    const fallbackReason = context.reason;
+    const fallbackQuality = context.targetQuality;
 
     try {
       const decision = await this.silo.replanPlaybackQuality(
@@ -339,18 +343,23 @@ export class PlaybackService {
         context.profileId,
         context.playbackAttemptId,
         context.plan,
-        context.targetQuality,
+        fallbackQuality,
         context.requestProfile,
         session.lastPositionSeconds
       );
       const plan = this.usableHlsPlan(decision);
       if (!plan) throw new Error('Silo did not return a usable fallback plan.');
       const upstreamPath = '/api/v1' + plan.stream.url;
+      const nextTargetQuality = selectRuntimeFallbackQuality(
+        plan,
+        [...(context.appliedQualities || []), fallbackQuality]
+      );
       const applied = this.sessions.completeRuntimeFallback(session.playbackKey, {
         plan,
         upstreamPath,
         delivery: plan.delivery,
         siloSessionId: decision.session_id,
+        nextTargetQuality,
         // Runtime fallback currently targets H.264/AAC compatibility. It does
         // not prove any non-baseline device capability.
         capabilityClaims: []
@@ -373,9 +382,11 @@ export class PlaybackService {
       this.logger.info({
         playback_id: session.playbackId,
         silo_session_id: decision.session_id || session.siloSessionId,
-        fallback_attempt: 1,
-        fallback_reason: context.reason,
-        fallback_quality: context.targetQuality,
+        fallback_attempt: fallbackAttempt,
+        fallback_attempt_limit: context.maxAttempts ?? 1,
+        fallback_reason: fallbackReason,
+        fallback_quality: fallbackQuality,
+        next_fallback_quality: nextTargetQuality,
         position_seconds: Number(session.lastPositionSeconds.toFixed(2)),
         replan_ms: this.now() - startedAt
       }, 'Playback quality fallback activated');
@@ -386,7 +397,7 @@ export class PlaybackService {
         route: playbackOutcomeRoute(plan.delivery),
         level: 'warning',
         failureDomain: 'transcoder',
-        reason: context.reason,
+        reason: fallbackReason,
         mediaFileId: session.mediaFileId,
         season: session.season,
         episode: session.episode,
@@ -401,7 +412,7 @@ export class PlaybackService {
         route: playbackOutcomeRoute(session.delivery),
         level: 'error',
         failureDomain: 'ambiguous',
-        reason: context.reason,
+        reason: fallbackReason,
         mediaFileId: session.mediaFileId,
         season: session.season,
         episode: session.episode,
@@ -410,9 +421,10 @@ export class PlaybackService {
       this.logger.warn({
         playback_id: session.playbackId,
         silo_session_id: session.siloSessionId,
-        fallback_attempt: 1,
-        fallback_reason: context.reason,
-        fallback_quality: context.targetQuality,
+        fallback_attempt: fallbackAttempt,
+        fallback_attempt_limit: context.maxAttempts ?? 1,
+        fallback_reason: fallbackReason,
+        fallback_quality: fallbackQuality,
         error
       }, 'Playback quality fallback failed');
     }
@@ -449,6 +461,25 @@ export class PlaybackService {
     } finally {
       this.keepAliveRunning = false;
     }
+  }
+
+  async stopPlayback(playbackId: string): Promise<boolean> {
+    return this.sessions.retireByPlaybackId(playbackId, 'admin_stopped');
+  }
+
+  operationsSnapshot(): {
+    sessions: { pending: number; active: number };
+    starts: {
+      active: number;
+      queued: number;
+      maxConcurrent: number;
+      maxQueued: number;
+    };
+  } {
+    return {
+      sessions: this.sessions.counts(),
+      starts: this.startCapacity.snapshot()
+    };
   }
 
   async close(): Promise<void> {
@@ -658,9 +689,17 @@ export class PlaybackService {
           decision.session_id && this.runtimeFallback?.enabled()
           ? selectRuntimeFallbackQuality(plan)
           : null;
+        const maxFallbackAttempts = Math.max(
+          1,
+          Math.min(3, this.runtimeFallback?.maxAttempts?.() ?? 1)
+        );
         let fallbackState: 'ready' | 'completed' | 'failed' = 'ready';
+        let fallbackAttempts = 0;
+        const appliedFallbackQualities: typeof targetQuality[] = [];
+        let nextTargetQuality = targetQuality;
         if (targetQuality && this.now() - startupStartedAt >=
           (this.runtimeFallback?.startupMs() ?? Number.POSITIVE_INFINITY)) {
+          fallbackAttempts = 1;
           try {
             const previousSessionId = decision.session_id!;
             const replanned = await this.silo.replanPlaybackQuality(
@@ -676,7 +715,15 @@ export class PlaybackService {
             if (!fallbackPlan) throw new Error('Silo did not return a usable fallback plan.');
             decision = replanned;
             plan = fallbackPlan;
-            fallbackState = 'completed';
+            appliedFallbackQualities.push(targetQuality);
+            nextTargetQuality = selectRuntimeFallbackQuality(
+              fallbackPlan,
+              appliedFallbackQualities.filter(Boolean) as string[]
+            );
+            fallbackState = nextTargetQuality &&
+              fallbackAttempts < maxFallbackAttempts
+              ? 'ready'
+              : 'completed';
             if (decision.session_id && decision.session_id !== previousSessionId) {
               await this.terminateSiloSession(
                 previousSessionId,
@@ -688,8 +735,10 @@ export class PlaybackService {
               playback_id: playbackId,
               silo_session_id: decision.session_id || null,
               fallback_attempt: 1,
+              fallback_attempt_limit: maxFallbackAttempts,
               fallback_reason: 'startup_latency',
-              fallback_quality: targetQuality
+              fallback_quality: targetQuality,
+              next_fallback_quality: nextTargetQuality
             }, 'Playback quality fallback activated');
             this.reportOrchestrationOutcome(input, playbackId, {
               code: 'quality_fallback_applied',
@@ -743,9 +792,17 @@ export class PlaybackService {
             playbackAttemptId: started.playbackAttemptId,
             plan,
             requestProfile: policy.requestProfile,
-            targetQuality,
+            targetQuality: nextTargetQuality || targetQuality,
             state: fallbackState,
-            reason: fallbackState === 'ready' ? null : 'startup_latency'
+            reason: fallbackState === 'ready' ? null : 'startup_latency',
+            attempts: fallbackAttempts,
+            maxAttempts: maxFallbackAttempts,
+            appliedQualities: appliedFallbackQualities.filter(
+              (quality): quality is NonNullable<typeof quality> => Boolean(quality)
+            ),
+            lastAppliedQuality: appliedFallbackQualities.length
+              ? targetQuality
+              : null
           } : undefined
         };
       }

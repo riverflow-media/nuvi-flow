@@ -180,6 +180,14 @@ export class SettingsService {
     )));
   }
 
+  get siloRuntimeFallbackMaxAttempts(): number {
+    return Math.min(3, Math.floor(this.number(
+      'siloRuntimeFallbackMaxAttempts',
+      this.defaults.siloRuntimeFallbackMaxAttempts,
+      1
+    )));
+  }
+
   get siloMaxConcurrentStarts(): number {
     return Math.min(8, Math.floor(this.number(
       'siloMaxConcurrentStarts',
@@ -328,6 +336,7 @@ export class SettingsService {
       siloRuntimeFallbackSlowSegmentMs: this.siloRuntimeFallbackSlowSegmentMs,
       siloRuntimeFallbackSlowSegmentCount: this.siloRuntimeFallbackSlowSegmentCount,
       siloRuntimeFallbackStartupMs: this.siloRuntimeFallbackStartupMs,
+      siloRuntimeFallbackMaxAttempts: this.siloRuntimeFallbackMaxAttempts,
       siloMaxConcurrentStarts: this.siloMaxConcurrentStarts,
       siloMaxQueuedStarts: this.siloMaxQueuedStarts,
       siloStartQueueTimeoutMs: this.siloStartQueueTimeoutMs,

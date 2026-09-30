@@ -233,6 +233,48 @@ describe('fallback addon service', () => {
     service.close();
   });
 
+  it('aborts an active proxy transfer when its playback is stopped', async () => {
+    const fetcher = vi.fn((url: string | URL | Request, init?: RequestInit) => {
+      if (!String(url).includes('cdn.example')) {
+        return Promise.resolve(new Response(JSON.stringify({
+          streams: [{
+            url: 'https://cdn.example/movie.mkv',
+            title: 'Cached 1080p WEB-DL'
+          }]
+        }), { status: 200 }));
+      }
+      return new Promise<Response>((_resolve, reject) => {
+        if (init?.signal?.aborted) {
+          reject(new DOMException('Stopped', 'AbortError'));
+          return;
+        }
+        init?.signal?.addEventListener('abort', () => reject(
+          new DOMException('Stopped', 'AbortError')
+        ), { once: true });
+      });
+    });
+    const service = new FallbackAddonService(
+      settings(),
+      { info: vi.fn(), warn: vi.fn() },
+      {
+        fetch: fetcher,
+        lookup: async () => ['8.8.8.8'],
+        cleanupIntervalMs: 0
+      }
+    );
+    const session = await service.tryPlayback(input);
+    expect(session).not.toBeNull();
+    const transfer = service.fetchMedia(session!, { method: 'GET' });
+    await vi.waitFor(() => expect(fetcher).toHaveBeenCalledTimes(2));
+    expect(service.counts()).toEqual({ active: 1, transfers: 1 });
+
+    expect(service.stopPlayback(session!.playbackId)).toBe(true);
+    expect(service.stopPlayback(session!.playbackId)).toBe(false);
+    await expect(transfer).rejects.toThrow('Fallback playback was stopped');
+    expect(service.counts()).toEqual({ active: 0, transfers: 0 });
+    service.close();
+  });
+
   it('rejects an unsafe redirect returned while proxying', async () => {
     const fetcher = vi.fn(async () => new Response(null, {
       status: 302,

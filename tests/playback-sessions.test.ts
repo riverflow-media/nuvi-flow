@@ -426,7 +426,11 @@ describe('PlaybackSessionRegistry', () => {
           requestProfile,
           targetQuality: '1080p-high',
           state: 'ready',
-          reason: null
+          reason: null,
+          attempts: 0,
+          maxAttempts: 2,
+          appliedQualities: [],
+          lastAppliedQuality: null
         }
       })
     );
@@ -470,7 +474,8 @@ describe('PlaybackSessionRegistry', () => {
       },
       upstreamPath: '/api/v1/playback/transcode/silo-session-b/master.m3u8',
       delivery: 'server_transcode_hls',
-      siloSessionId: 'silo-session-b'
+      siloSessionId: 'silo-session-b',
+      nextTargetQuality: '1080p-medium'
     });
     expect(registry.resolveUpstreamPath(started.upstreamPath)).toBe(
       '/api/v1/playback/transcode/silo-session-b/master.m3u8'
@@ -485,6 +490,58 @@ describe('PlaybackSessionRegistry', () => {
       audioCodec: 'aac',
       dynamicRange: 'sdr'
     });
+    expect((await registry.activeSnapshot())[0]?.runtimeFallback).toMatchObject({
+      state: 'ready',
+      attempts: 1,
+      maxAttempts: 2,
+      appliedQualities: ['1080p-high'],
+      lastAppliedQuality: '1080p-high',
+      targetQuality: '1080p-medium'
+    });
+
+    const replacementSegment =
+      '/api/v1/playback/transcode/silo-session-b/segment/seg_00002.ts';
+    registry.recordUpstreamResponse(replacementSegment, 2800, 200, {
+      slowSegmentMs: 2500, slowSegmentCount: 2
+    });
+    expect(registry.recordUpstreamResponse(
+      replacementSegment,
+      2900,
+      200,
+      { slowSegmentMs: 2500, slowSegmentCount: 2 }
+    )).toMatchObject({ fallbackDue: true });
+    expect(registry.claimRuntimeFallback(
+      result.session.playbackKey,
+      'slow_segments'
+    )?.runtimeFallback).toMatchObject({
+      state: 'pending',
+      attempts: 2,
+      targetQuality: '1080p-medium'
+    });
+    registry.completeRuntimeFallback(result.session.playbackKey, {
+      plan: {
+        delivery: 'server_transcode_hls',
+        stream: {
+          url: '/playback/transcode/silo-session-c/master.m3u8',
+          protocol: 'hls', headers: {}, header_refresh: 'none'
+        },
+        effective_recipe: { height: 1080 }
+      },
+      upstreamPath: '/api/v1/playback/transcode/silo-session-c/master.m3u8',
+      delivery: 'server_transcode_hls',
+      siloSessionId: 'silo-session-c',
+      nextTargetQuality: '1080p-low'
+    });
+    expect((await registry.activeSnapshot())[0]?.runtimeFallback).toMatchObject({
+      state: 'completed',
+      attempts: 2,
+      appliedQualities: ['1080p-high', '1080p-medium'],
+      lastAppliedQuality: '1080p-medium'
+    });
+    expect(registry.claimRuntimeFallback(
+      result.session.playbackKey,
+      'slow_segments'
+    )).toBeNull();
     await registry.close();
   });
 
@@ -508,7 +565,9 @@ describe('PlaybackSessionRegistry', () => {
             }
           },
           requestProfile, targetQuality: '1080p-medium',
-          state: 'ready', reason: null
+          state: 'ready', reason: null,
+          attempts: 0, maxAttempts: 2,
+          appliedQualities: [], lastAppliedQuality: null
         }
       })
     );
@@ -558,6 +617,29 @@ describe('PlaybackSessionRegistry', () => {
       'fallback_selected'
     );
     expect(await registry.activeSnapshot()).toHaveLength(1);
+    await registry.close();
+  });
+
+  it('retires one exact playback ID for an administrator stop', async () => {
+    const registry = new PlaybackSessionRegistry({ cleanupIntervalMs: 0 });
+    const retired = vi.fn(async () => {});
+    registry.setRetirementHandler(retired);
+    const result = await registry.getOrCreate(
+      { ...baseKey, mode: 'auto-silo' },
+      Date.now() + 60_000,
+      async () => started
+    );
+
+    await expect(registry.retireByPlaybackId(result.session.playbackId))
+      .resolves.toBe(true);
+    await expect(registry.retireByPlaybackId(result.session.playbackId))
+      .resolves.toBe(false);
+    expect(retired).toHaveBeenCalledOnce();
+    expect(retired).toHaveBeenCalledWith(
+      expect.objectContaining({ playbackId: result.session.playbackId }),
+      'admin_stopped'
+    );
+    expect(registry.counts()).toEqual({ pending: 0, active: 0 });
     await registry.close();
   });
 

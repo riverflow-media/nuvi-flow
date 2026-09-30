@@ -48,7 +48,7 @@ The current integration provides:
 - Source-resolution preservation, including 4K, when the declared device
   capabilities and Silo route allow it; Auto has no machine-specific 1080p cap
 - An optional separate Direct Play entry, shown by default and hideable under
-  **Settings → Silo**. This is display-only: Auto still gives the scanned
+  **Settings → Playback**. This is display-only: Auto still gives the scanned
   source's byte-for-byte original route first priority. If Silo is unavailable,
   Direct is always retained so the addon never returns an empty playback choice
 - Source-aware original negotiation in Auto, followed by conservative H.264,
@@ -98,14 +98,18 @@ The current integration provides:
   authenticated HLS manifest checks preserve a bounded five-minute pause window.
   Original/progressive streams rely on their live transport instead of polling
 - Rolling per-session media-response observations. Repeated HLS segment waits of
-  two seconds or more produce one structured summary at controlled intervals,
-  providing the evidence needed for bounded quality fallback without log floods
+  at least the configured threshold produce one structured summary at controlled
+  intervals, providing the evidence needed for bounded quality fallback without
+  log floods
 - A unique Nuvi-Flow playback ID in structured session logs and the `X-Nuvi-Flow-Playback-Id` response header
 - A password-protected **Activity** view showing current and briefly idle direct,
   Silo, and fallback-addon streams, including the route Auto selected, source
-  and target media details, fallback state, and a short playback trace ID. The
-  view never returns file paths, upstream URLs, signed token IDs, internal Silo
-  session IDs, or credentials
+  and target media details, fallback progress, and a short playback trace ID.
+  Live operations cards show Silo sessions, start admission/queue pressure, and
+  AIO proxy transfers. Administrators can stop an exact Silo or AIO session from
+  the same view; direct-file responses are not mislabeled as remotely stoppable.
+  The view never returns file paths, upstream URLs, signed token IDs, internal
+  Silo session IDs, or credentials
 - A persistent **Recent server observations** timeline under Activity for route
   selection, accepted delivery responses, degraded delivery, bounded quality
   fallback, capacity pressure, and unavailable sources/plans. Observations are
@@ -121,7 +125,7 @@ The current integration provides:
   manifest and is the reference provider
 
 The fallback addon is disabled by default. Configure it under **Settings →
-Fallback addon** using the private installed manifest URL. When local media is
+Fallback** using the private installed manifest URL. When local media is
 missing, fallback playback and the existing Radarr/Sonarr request proceed
 independently, so a local copy is still prepared for next time. A 5-second timeout,
 30-second result cache, and single-flight lookup prevent a slow addon from
@@ -148,6 +152,8 @@ when a local session expires, and during graceful shutdown. Pending Silo starts
 are fenced as well: if one finishes after AIO has won, its newly created session
 is stopped instead of becoming an orphaned FFmpeg workload. Cleanup uses only
 the exact server-side session ID and never exposes the Silo API key.
+Stopping, expiring, or shutting down an AIO session also aborts its active
+upstream proxy reads rather than merely removing its registry entry.
 
 Nuvi-Flow requests AIOStreams' extended stream metadata using its documented
 client identity header. When AIOStreams or the upstream response supplies a file size and the local
@@ -166,7 +172,7 @@ already owns per-user stream/transcode admission and each stream node's live job
 capacity, including transcodes launched by other clients. Nuvi-Flow only limits
 simultaneous protocol-v3 start negotiations to prevent request bursts from
 overloading that control path. The concurrent-start limit, queued-start limit,
-and queue wait are configurable under **Settings → Silo → Playback admission**.
+and queue wait are configurable under **Settings → Playback → Playback admission**.
 If Silo returns an unusable decision with a session ID, Nuvi-Flow stops that
 session before falling back or replying to the client.
 
@@ -179,13 +185,15 @@ permanent device capability. Raw IP addresses and private addon URLs are not
 stored. If the reverse proxy does not supply a trustworthy client address,
 Nuvi-Flow does not use the observation to reject local direct playback.
 
-Auto Silo transcodes also have one bounded runtime quality fallback. A slow
-startup, repeated slow segment header waits, or consecutive upstream failures
-can move a struggling 4K transcode to an available 1080p rung (or reduce a
-struggling 1080p rung) without an endless restart loop. Nuvi-Flow derives an
-approximate source position from the HLS media playlist so Silo can replan near
-the active segment. This per-session signal expires with the session and never
-becomes permanent device capability evidence.
+Auto Silo transcodes also have bounded multi-step runtime quality fallback. A
+slow startup, repeated slow segment header waits, or consecutive upstream
+failures can move a struggling 4K transcode through cheaper Silo-advertised
+rungs. Each successful step clears the previous degradation streak before
+another step can qualify, and the administrator-set attempt cap (two by default,
+maximum three) prevents restart loops. Nuvi-Flow derives an approximate source
+position from the HLS media playlist so Silo can replan near the active segment.
+This per-session signal expires with the session and never becomes permanent
+device capability evidence.
 
 The Activity observation timeline reports only what Nuvi-Flow can verify at its
 server boundary. An accepted byte range or HLS response means delivery reached
@@ -221,11 +229,11 @@ remain binding administrator requests.
 
 Streaming removes Nuvi-Flow's previous segment-sized startup delay and memory
 buffer. Silo protocol v3 does not currently provide encoder FPS or GPU
-utilization, so the bounded runtime replan uses only response evidence visible
-to Nuvi-Flow and performs at most once per playback session.
+utilization, so runtime replans use only response evidence visible to Nuvi-Flow
+and stop at the configured 1–3 attempt limit.
 
 New installations default to Auto. An existing saved fixed quality remains an
-intentional override after upgrading; select **Auto** under **Settings → Silo**
+intentional override after upgrading; select **Auto** under **Settings → Playback**
 to use the new policy.
 
 Device identity prefers an explicit Nuvio/Stremio device header. When none is
@@ -362,7 +370,7 @@ The password-protected dashboard provides:
   system configuration
 - Library overview
 - Live playback activity across direct, Silo original/remux/transcode, and AIO
-  fallback routes
+  fallback routes, with admission/queue health and exact Silo/AIO stop controls
 - Pseudonymous playback devices, learned compatibility evidence, and explicit
   per-device Auto/Supported/Unsupported controls
 - Recently added media
@@ -602,10 +610,11 @@ Common environment variables include:
 | `SILO_API_KEY` | Silo API key; never returned to the browser |
 | `SILO_PROFILE_ID` | Silo playback profile ID |
 | `SILO_TRANSCODE_QUALITY` | Silo quality policy; `auto` (default) preserves source resolution when viable, while a named rung is a fixed override |
-| `SILO_RUNTIME_FALLBACK_ENABLED` | Allow one evidence-triggered quality replan for a struggling Auto HLS transcode; default `true` |
+| `SILO_RUNTIME_FALLBACK_ENABLED` | Allow bounded evidence-triggered quality replans for a struggling Auto HLS transcode; default `true` |
 | `SILO_RUNTIME_FALLBACK_SLOW_SEGMENT_MS` | Segment header wait considered slow, 1,000–15,000 ms; default `2500` |
 | `SILO_RUNTIME_FALLBACK_SLOW_SEGMENT_COUNT` | Consecutive slow segments required, 2–10; default `3` |
-| `SILO_RUNTIME_FALLBACK_STARTUP_MS` | Startup time that triggers the one lower-rung replan, 5,000–60,000 ms; default `20000` |
+| `SILO_RUNTIME_FALLBACK_STARTUP_MS` | Startup time that triggers an initial lower-rung replan, 5,000–60,000 ms; default `20000` |
+| `SILO_RUNTIME_FALLBACK_MAX_ATTEMPTS` | Maximum distinct Silo-advertised quality reductions per playback, 1–3; default `2` |
 | `SILO_MAX_CONCURRENT_STARTS` | Maximum distinct Silo start negotiations running at once, 1–8; default `2` |
 | `SILO_MAX_QUEUED_STARTS` | Additional distinct Silo starts allowed to wait FIFO, 0–32; default `4` |
 | `SILO_START_QUEUE_TIMEOUT_MS` | Maximum queue wait before Auto fallback or a retryable response, 1,000–60,000 ms; default `15000` |

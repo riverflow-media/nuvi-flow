@@ -480,7 +480,7 @@ describe('playback orchestration', () => {
     await service.close();
   });
 
-  it('performs one position-preserving replan after repeated slow segments', async () => {
+  it('performs bounded position-preserving replans across distinct rungs', async () => {
     const registry = new PlaybackSessionRegistry({ cleanupIntervalMs: 0 });
     const capabilities = {
       touchDevice: vi.fn(),
@@ -505,7 +505,9 @@ describe('playback orchestration', () => {
           effective_recipe: { height: 2160 },
           available_qualities: [
             { label: '2160p-high', height: 2160, preserves_source: false },
-            { label: '1080p-high', height: 1080, preserves_source: false }
+            { label: '1080p-high', height: 1080, preserves_source: false },
+            { label: '1080p-medium', height: 1080, preserves_source: false },
+            { label: '1080p-low', height: 1080, preserves_source: false }
           ],
           stream: {
             url: '/playback/transcode/session-1/master.m3u8',
@@ -514,20 +516,29 @@ describe('playback orchestration', () => {
         }
       }
     }));
-    const replanPlaybackQuality = vi.fn(async () => ({
-      protocol_version: 3 as const,
-      server_features: [],
-      outcome: 'playable',
-      session_id: 'session-2',
-      playback_plan: {
-        delivery: 'server_transcode_hls',
-        effective_recipe: { height: 1080 },
-        stream: {
-          url: '/playback/transcode/session-2/master.m3u8',
-          protocol: 'hls', headers: {}, header_refresh: 'none'
+    let replanAttempt = 0;
+    const replanPlaybackQuality = vi.fn(async () => {
+      replanAttempt += 1;
+      const sessionId = `session-${replanAttempt + 1}`;
+      return {
+        protocol_version: 3 as const,
+        server_features: [],
+        outcome: 'playable' as const,
+        session_id: sessionId,
+        playback_plan: {
+          delivery: 'server_transcode_hls',
+          effective_recipe: { height: 1080 },
+          available_qualities: [
+            { label: '1080p-medium', height: 1080, preserves_source: false },
+            { label: '1080p-low', height: 1080, preserves_source: false }
+          ],
+          stream: {
+            url: `/playback/transcode/${sessionId}/master.m3u8`,
+            protocol: 'hls' as const, headers: {}, header_refresh: 'none' as const
+          }
         }
-      }
-    }));
+      };
+    });
     const stopPlayback = vi.fn(async () => true);
     const service = new PlaybackService(
       {
@@ -544,7 +555,8 @@ describe('playback orchestration', () => {
           enabled: () => true,
           slowSegmentMs: () => 2500,
           slowSegmentCount: () => 2,
-          startupMs: () => 20_000
+          startupMs: () => 20_000,
+          maxAttempts: () => 2
         }
       }
     );
@@ -576,12 +588,32 @@ describe('playback orchestration', () => {
       expect.any(Object),
       40
     );
-    service.recordMediaResponse(segment, 2800, 200);
+    const secondSegment =
+      '/api/v1/playback/transcode/session-2/segment/seg_00040.ts';
+    service.recordManifest([{ path: secondSegment, positionSeconds: 80 }]);
+    service.recordMediaResponse(secondSegment, 2800, 200);
+    service.recordMediaResponse(secondSegment, 2900, 200);
+    await vi.waitFor(() => expect(replanPlaybackQuality).toHaveBeenCalledTimes(2));
+    expect(replanPlaybackQuality).toHaveBeenLastCalledWith(
+      'session-2',
+      'profile-1',
+      'attempt-1',
+      expect.objectContaining({ delivery: 'server_transcode_hls' }),
+      '1080p-medium',
+      expect.any(Object),
+      80
+    );
+    const thirdSegment =
+      '/api/v1/playback/transcode/session-3/segment/seg_00060.ts';
+    service.recordMediaResponse(thirdSegment, 3000, 200);
+    service.recordMediaResponse(thirdSegment, 3100, 200);
     await new Promise(resolve => setTimeout(resolve, 0));
-    expect(replanPlaybackQuality).toHaveBeenCalledOnce();
+    expect(replanPlaybackQuality).toHaveBeenCalledTimes(2);
     expect(service.resolveMediaPath(result.sessionResult.session.upstreamPath))
-      .toBe('/api/v1/playback/transcode/session-2/master.m3u8');
+      .toBe('/api/v1/playback/transcode/session-3/master.m3u8');
     expect(stopPlayback).toHaveBeenCalledWith('session-1');
+    expect(stopPlayback).toHaveBeenCalledWith('session-2');
+    expect(stopPlayback).toHaveBeenCalledTimes(2);
     await service.close();
   });
 

@@ -17,10 +17,16 @@ function knownQuality(value: string): value is SiloQualityPreference {
  * available. Auto never invents a server quality label.
  */
 export function selectRuntimeFallbackQuality(
-  plan: SiloPlaybackPlan
+  plan: SiloPlaybackPlan,
+  excluded: Iterable<string> = []
 ): SiloQualityPreference | null {
+  const excludedLabels = new Set(excluded);
   const available = (plan.available_qualities || [])
-    .filter(quality => knownQuality(quality.label) && !quality.preserves_source)
+    .filter(quality =>
+      knownQuality(quality.label) &&
+      !quality.preserves_source &&
+      !excludedLabels.has(quality.label)
+    )
     .map(quality => ({
       label: quality.label as SiloQualityPreference,
       height: quality.height || 0,
