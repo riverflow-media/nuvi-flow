@@ -281,6 +281,25 @@ the declared SDR target.
 - Provide responsive status cards, explicit manual refresh, and a copyable JSON
   diagnostic bundle for support and deployment troubleshooting
 
+## Completed resilient scan operations foundation
+
+- Expose process-local scan phase, elapsed time, discovered/examined/changed
+  counts, match/error totals, and determinate processing progress through an
+  authenticated, path-free API
+- Replace eager scheduling of every file with a bounded worker pool so a cancel
+  request stops admitting new work while preserving the configured concurrency
+- Make `ffprobe` child processes abortable and use the same cancellation path
+  for administrator requests and graceful shutdown
+- Preserve already completed file updates, but skip removal reconciliation for
+  every partial scan so cancellation cannot delete catalog entries that were
+  simply not reached
+- Persist explicit completed, cancelled, failed, and interrupted terminal states
+  with fixed safe messages. Convert abandoned `running` rows on startup rather
+  than presenting stale work as active
+- Poll live progress only while Scan Logs is open or work is active, with
+  responsive counters, a progress indicator, start controls, and a CSRF-protected
+  cancel action
+
 ## Optional future features
 
 - Optional per-user Silo statistics integration. Keep the default single-user

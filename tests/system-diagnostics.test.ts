@@ -110,6 +110,37 @@ describe('system diagnostics', () => {
     }));
   });
 
+  it('surfaces sanitized live scanner phase and progress', async () => {
+    vi.spyOn(built.scanner, 'snapshot').mockReturnValue({
+      mode: 'full',
+      phase: 'processing',
+      status: 'running',
+      startedAt: Date.now() - 5_000,
+      elapsedMs: 5_000,
+      discovered: 20,
+      examined: 7,
+      processed: 5,
+      matched: 7,
+      unmatched: 0,
+      errors: 0,
+      progressPercent: 35,
+      cancelRequested: false
+    });
+
+    const snapshot = await built.systemDiagnostics.snapshot(true);
+
+    expect(snapshot.operations.scanner).toEqual({
+      running: true,
+      phase: 'processing',
+      progressPercent: 35
+    });
+    expect(snapshot.checks).toContainEqual(expect.objectContaining({
+      id: 'scanner',
+      status: 'healthy',
+      summary: 'A full scan is processing; 7 of 20 files examined.'
+    }));
+  });
+
   it('reports inaccessible roots and recent failures without leaking sensitive values', async () => {
     const privatePath = path.join(directory, 'secret-missing-movies');
     built.settings.set('moviesPath', privatePath);

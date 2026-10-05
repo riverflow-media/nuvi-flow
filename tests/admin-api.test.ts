@@ -205,6 +205,65 @@ describe('admin media detail API', () => {
     expect(cached.body).not.toContain(directory);
   });
 
+  it('returns live scan progress and requires CSRF to cancel it', async () => {
+    const current = {
+      mode: 'full' as const,
+      phase: 'processing' as const,
+      status: 'running' as const,
+      startedAt: Date.now() - 2_000,
+      elapsedMs: 2_000,
+      discovered: 10,
+      examined: 4,
+      processed: 3,
+      matched: 4,
+      unmatched: 0,
+      errors: 0,
+      progressPercent: 40,
+      cancelRequested: false
+    };
+    vi.spyOn(built.scanner, 'snapshot').mockReturnValue(current);
+    const cancel = vi.spyOn(built.scanner, 'cancel').mockReturnValue(true);
+    built.database.sqlite.prepare(
+      `INSERT INTO scan_runs (
+        id,mode,status,discovered,processed,matched,unmatched,errors,
+        started_at,finished_at,message
+      ) VALUES ('scan-history','changed','completed',8,2,8,0,0,1,2,NULL)`
+    ).run();
+
+    expect((await built.app.inject({
+      method: 'GET', url: '/admin/api/scans'
+    })).statusCode).toBe(401);
+
+    const scans = await request('GET', '/admin/api/scans');
+    expect(scans.statusCode).toBe(200);
+    expect(scans.json()).toMatchObject({
+      current: {
+        mode: 'full',
+        phase: 'processing',
+        examined: 4,
+        progressPercent: 40
+      },
+      recent: [expect.objectContaining({
+        mode: 'changed',
+        status: 'completed',
+        discovered: 8
+      })]
+    });
+
+    expect((await built.app.inject({
+      method: 'POST',
+      url: '/admin/api/scan/cancel',
+      headers: { cookie }
+    })).statusCode).toBe(403);
+    const cancelled = await request('POST', '/admin/api/scan/cancel');
+    expect(cancelled.statusCode).toBe(202);
+    expect(cancel).toHaveBeenCalledWith('administrator');
+
+    cancel.mockReturnValue(false);
+    expect((await request('POST', '/admin/api/scan/cancel')).statusCode)
+      .toBe(409);
+  });
+
   it('requires CSRF and stops only an active playback ID', async () => {
     const stopSilo = vi.spyOn(built.playback, 'stopPlayback')
       .mockResolvedValue(true);

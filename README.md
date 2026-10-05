@@ -376,9 +376,8 @@ The password-protected dashboard provides:
 - Recently added media
 - Files needing review
 - Manual metadata matching
-- Scan history
-- Changed-library scans
-- Full rescans
+- Live scan phase, progress, counters, elapsed time, and durable terminal history
+- Changed-library scans and full rescans with safe cancellation
 - Automatic request history
 - Failed-request retries
 - Radarr connection testing
@@ -415,6 +414,14 @@ System Health runs only when the page is opened or **Run checks** is selected.
 External checks are single-flight and cached for one minute, so diagnostics do
 not create background integration polling. The lightweight public `/health`
 container endpoint remains independent of optional integrations.
+
+Scan Logs updates every two seconds only while that workspace is open or a scan
+is active. Cancelling a scan stops new work, aborts an active `ffprobe` process,
+keeps file updates that already completed, and deliberately skips removal
+reconciliation so a partial scan cannot delete catalog entries. Graceful
+shutdown uses the same path and waits for scanner work to settle before SQLite
+closes. If a process exits unexpectedly, its unfinished history row is marked
+**interrupted** on the next start instead of remaining **running** forever.
 
 Saved Radarr, Sonarr, and Silo API keys and the private fallback-addon manifest
 URL are never returned to the browser. The diagnostic bundle also excludes

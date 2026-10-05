@@ -31,7 +31,11 @@ export interface SystemDiagnosticsSnapshot {
   uptimeSeconds: number;
   checks: SystemDiagnosticCheck[];
   operations: {
-    scanner: { running: boolean };
+    scanner: {
+      running: boolean;
+      phase: string | null;
+      progressPercent: number | null;
+    };
     silo: {
       activeSessions: number;
       pendingSessions: number;
@@ -144,6 +148,7 @@ export class SystemDiagnosticsService {
     ]);
     const operations = this.playback.operationsSnapshot();
     const fallback = this.fallbackAddon.counts();
+    const scan = this.scanner.snapshot();
     const status = checks.some(check => check.status === 'error')
       ? 'unhealthy'
       : checks.some(check => check.status === 'warning')
@@ -158,7 +163,11 @@ export class SystemDiagnosticsService {
       uptimeSeconds: Math.max(0, Math.floor(this.uptime())),
       checks,
       operations: {
-        scanner: { running: this.scanner.isRunning() },
+        scanner: {
+          running: Boolean(scan),
+          phase: scan?.phase ?? null,
+          progressPercent: scan?.progressPercent ?? null
+        },
         silo: {
           activeSessions: operations.sessions.active,
           pendingSessions: operations.sessions.pending,
@@ -248,12 +257,18 @@ export class SystemDiagnosticsService {
   }
 
   private async scannerCheck(): Promise<SystemDiagnosticCheck> {
-    if (this.scanner.isRunning()) {
+    const scan = this.scanner.snapshot();
+    if (scan) {
+      const progress = scan.progressPercent == null
+        ? `${scan.discovered} files discovered`
+        : `${scan.examined} of ${scan.discovered} files examined`;
       return {
         id: 'scanner',
         label: 'Library scanner',
         status: 'healthy',
-        summary: 'A library scan is currently running.',
+        summary: scan.cancelRequested
+          ? 'A library scan is stopping safely.'
+          : `A ${scan.mode} scan is ${scan.phase}; ${progress}.`,
         latencyMs: null
       };
     }

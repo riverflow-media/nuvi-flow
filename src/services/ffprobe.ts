@@ -59,10 +59,14 @@ function compatibilityWarningFor(videoCodec: string | null, audioCodec: string |
   return warnings.length ? `Direct playback may not be supported: ${warnings.join(', ')}` : null;
 }
 
-export async function inspectMedia(filePath: string, ffprobePath = 'ffprobe'): Promise<MediaProbe> {
+export async function inspectMedia(
+  filePath: string,
+  ffprobePath = 'ffprobe',
+  signal?: AbortSignal
+): Promise<MediaProbe> {
   const { stdout } = await execFileAsync(ffprobePath, [
     '-v', 'error', '-print_format', 'json', '-show_format', '-show_streams', '-show_chapters', filePath
-  ], { maxBuffer: 32 * 1024 * 1024, timeout: 120_000 });
+  ], { maxBuffer: 32 * 1024 * 1024, timeout: 120_000, signal });
   const raw = JSON.parse(stdout) as ProbeOutput;
   if (raw.format) delete raw.format.filename;
   const streams = raw.streams ?? [];

@@ -29,6 +29,7 @@ function appState(files = [mediaFile()]) {
       errors: files.filter((file) => file.status === 'error').length
     },
     logs: [],
+    scan: null,
     settings: {
       addonName: 'Nuvi-Flow',
       baseUrl: 'http://localhost:60500', moviesPath: '/media/movies', tvPath: '/media/tv',
@@ -247,6 +248,77 @@ describe('media details modal', () => {
       '/admin/api/system-health?refresh=1',
       expect.objectContaining({ headers: expect.any(Object) })
     );
+  });
+
+  it('renders live scan progress and safely requests cancellation', async () => {
+    const running = {
+      mode: 'full', phase: 'processing', status: 'running',
+      startedAt: Date.now() - 5_000, elapsedMs: 5_000,
+      discovered: 10, examined: 4, processed: 3, matched: 4,
+      unmatched: 0, errors: 0, progressPercent: 40,
+      cancelRequested: false
+    };
+    const history = [{
+      id: 'scan-1', mode: 'changed', status: 'completed',
+      discovered: 8, processed: 2, matched: 8, unmatched: 0, errors: 0,
+      startedAt: Date.now() - 60_000, finishedAt: Date.now() - 50_000,
+      message: null
+    }];
+    let current: typeof running | null = running;
+    const fetchMock = vi.fn(async (
+      input: string | URL | Request,
+      init?: RequestInit
+    ) => {
+      if (String(input) === '/admin/api/state') return json(appState());
+      if (String(input) === '/admin/api/scans') {
+        return json({ current, recent: history });
+      }
+      if (String(input) === '/admin/api/scan/cancel' && init?.method === 'POST') {
+        current = { ...running, status: 'cancelling', cancelRequested: true };
+        return json({ ok: true, scan: current }, 202);
+      }
+      return json({ error: 'Unexpected request' }, 500);
+    });
+    install(fetchMock);
+    await flush();
+
+    document.querySelector<HTMLButtonElement>('[data-view="logs"]')!.click();
+    await flush();
+
+    expect(document.querySelector('#scanCurrent')?.textContent)
+      .toContain('full scan · processing');
+    expect(document.querySelector('#scanCurrent')?.textContent)
+      .toContain('Discovered10');
+    expect(document.querySelector('[role="progressbar"]')?.getAttribute('aria-valuenow'))
+      .toBe('40');
+    expect([...document.querySelectorAll<HTMLButtonElement>('[data-scan]')]
+      .every(button => button.disabled)).toBe(true);
+    expect(document.querySelector<HTMLButtonElement>('[data-cancel-scan]')?.hidden)
+      .toBe(false);
+
+    document.querySelector<HTMLButtonElement>('[data-cancel-scan]')!.click();
+    await flush();
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/admin/api/scan/cancel',
+      expect.objectContaining({ method: 'POST' })
+    );
+    expect(document.querySelector('#scanCurrent')?.textContent)
+      .toContain('Stopping scan safely');
+
+    current = null;
+    history.unshift({
+      ...history[0]!,
+      id: 'scan-2',
+      mode: 'full',
+      status: 'cancelled',
+      message: 'Scan cancelled by an administrator.'
+    });
+    await vi.advanceTimersByTimeAsync(2_000);
+    await flush();
+    expect(document.querySelector('#scanCurrent')?.textContent)
+      .toContain('Scanner idle');
+    expect(document.querySelector('#scanLogs')?.textContent)
+      .toContain('Scan cancelled by an administrator.');
   });
 
   it('saves values from every Settings panel in one request', async () => {

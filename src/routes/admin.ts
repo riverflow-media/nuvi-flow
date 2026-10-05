@@ -335,7 +335,33 @@ export function registerAdminRoutes(
     const logs = database.sqlite.prepare(`SELECT id,mode,status,discovered,processed,matched,unmatched,errors,
       started_at startedAt,finished_at finishedAt,message FROM scan_runs ORDER BY started_at DESC LIMIT 100`).all();
     const publicFiles = files.map(publicFile);
-    return reply.header('Cache-Control', 'no-store').send({ counts, files: publicFiles, recent: publicFiles.slice(0, 12), logs, settings: settings.publicView(), build: buildInfo(), scanning: scanner.isRunning() });
+    return reply.header('Cache-Control', 'no-store').send({
+      counts,
+      files: publicFiles,
+      recent: publicFiles.slice(0, 12),
+      logs,
+      settings: settings.publicView(),
+      build: buildInfo(),
+      scanning: scanner.isRunning(),
+      scan: scanner.snapshot()
+    });
+  });
+
+  app.get('/admin/api/scans', {
+    preHandler: requireAdmin(config),
+    config: { rateLimit: { max: 120, timeWindow: '1 minute' } }
+  }, async (_request, reply) => {
+    const recent = database.sqlite.prepare(
+      `SELECT id,mode,status,discovered,processed,matched,unmatched,errors,
+       started_at startedAt,finished_at finishedAt,message
+       FROM scan_runs
+       ORDER BY started_at DESC
+       LIMIT 100`
+    ).all();
+    return reply.header('Cache-Control', 'no-store').send({
+      current: scanner.snapshot(),
+      recent
+    });
   });
 
   app.get('/admin/api/system-health', {
@@ -620,7 +646,15 @@ export function registerAdminRoutes(
     if (scanner.isRunning()) return reply.code(409).send({ error: 'A scan is already running' });
     void scanner.scan(mode).catch((error) => request.log.error({ error }, 'Manual scan failed'));
     systemDiagnostics.invalidate();
-    return reply.code(202).send({ ok: true, mode });
+    return reply.code(202).send({ ok: true, mode, scan: scanner.snapshot() });
+  });
+
+  app.post('/admin/api/scan/cancel', { preHandler: requireAdmin(config, true) }, async (_request, reply) => {
+    if (!scanner.cancel('administrator')) {
+      return reply.code(409).send({ error: 'No cancellable scan is running' });
+    }
+    systemDiagnostics.invalidate();
+    return reply.code(202).send({ ok: true, scan: scanner.snapshot() });
   });
 
   app.post('/admin/api/integrations/:service/test', { preHandler: requireAdmin(config, true) }, async (request, reply) => {

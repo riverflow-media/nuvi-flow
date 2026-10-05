@@ -1,9 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { setTimeout as delay } from 'node:timers/promises';
 import chokidar, { type FSWatcher } from 'chokidar';
-import pLimit from 'p-limit';
 import type { FastifyBaseLogger } from 'fastify';
 import type { AppConfig } from '../config.js';
 import type { AppDatabase } from '../db/index.js';
@@ -16,7 +14,40 @@ import type { SiloFileMappingStore } from './silo-file-mappings.js';
 import type { TmdbService } from './tmdb.js';
 
 interface FoundFile { absolutePath: string; relativePath: string; type: MediaType; size: number; mtimeMs: number }
-type ScanMode = 'changed' | 'full' | 'watcher' | 'startup';
+export type ScanMode = 'changed' | 'full' | 'watcher' | 'startup';
+export type ScanPhase = 'discovering' | 'processing' | 'reconciling';
+
+export interface ScanProgressSnapshot {
+  mode: ScanMode;
+  phase: ScanPhase;
+  status: 'running' | 'cancelling';
+  startedAt: number;
+  elapsedMs: number;
+  discovered: number;
+  examined: number;
+  processed: number;
+  matched: number;
+  unmatched: number;
+  errors: number;
+  progressPercent: number | null;
+  cancelRequested: boolean;
+}
+
+interface ActiveScan {
+  runId: string;
+  mode: ScanMode;
+  phase: ScanPhase;
+  startedAt: number;
+  discovered: number;
+  examined: number;
+  processed: number;
+  matched: number;
+  unmatched: number;
+  errors: number;
+  cancelRequested: boolean;
+  cancelReason: 'administrator' | 'shutdown' | null;
+  controller: AbortController;
+}
 
 function stableFileId(type: MediaType, absolutePath: string): string {
   return `file_${createHash('sha256').update(`${type}:${absolutePath}`).digest('hex').slice(0, 24)}`;
@@ -29,17 +60,28 @@ function subtitleLanguage(name: string, mediaStem: string): string | null {
   return aliases[rest] || (/^[a-z]{2,3}$/.test(rest) ? rest : null);
 }
 
-async function walk(root: string, type: MediaType, minimumBytes: number): Promise<FoundFile[]> {
+async function walk(
+  root: string,
+  type: MediaType,
+  minimumBytes: number,
+  signal: AbortSignal,
+  onDiscovered: () => void
+): Promise<FoundFile[]> {
   const found: FoundFile[] = [];
   async function visit(directory: string): Promise<void> {
+    signal.throwIfAborted();
     const entries = await fs.promises.readdir(directory, { withFileTypes: true });
     for (const entry of entries) {
+      signal.throwIfAborted();
       if (entry.name.startsWith('.')) continue;
       const absolutePath = path.join(directory, entry.name);
       if (entry.isDirectory()) await visit(absolutePath);
       else if ((entry.isFile() || entry.isSymbolicLink()) && isMediaFilename(entry.name) && !shouldIgnorePath(absolutePath)) {
         const stat = await fs.promises.stat(absolutePath);
-        if (stat.isFile() && stat.size >= minimumBytes) found.push({ absolutePath, relativePath: path.relative(root, absolutePath), type, size: stat.size, mtimeMs: stat.mtimeMs });
+        if (stat.isFile() && stat.size >= minimumBytes) {
+          found.push({ absolutePath, relativePath: path.relative(root, absolutePath), type, size: stat.size, mtimeMs: stat.mtimeMs });
+          onDiscovered();
+        }
       }
     }
   }
@@ -49,6 +91,7 @@ async function walk(root: string, type: MediaType, minimumBytes: number): Promis
 
 export class MediaScanner {
   private running: Promise<void> | null = null;
+  private activeScan: ActiveScan | null = null;
   private watcher: FSWatcher | null = null;
   private timer: NodeJS.Timeout | null = null;
   private watchDebounce: NodeJS.Timeout | null = null;
@@ -61,20 +104,82 @@ export class MediaScanner {
     private readonly config: AppConfig,
     private readonly logger: FastifyBaseLogger,
     private readonly siloMappings?: SiloFileMappingStore
-  ) {}
+  ) {
+    this.database.sqlite.prepare(
+      `UPDATE scan_runs
+       SET status='interrupted',finished_at=COALESCE(finished_at,?),
+           message=COALESCE(message,'Scan interrupted by an earlier process exit.')
+       WHERE status='running'`
+    ).run(Date.now());
+  }
 
   scan(mode: ScanMode = 'changed'): Promise<void> {
     if (this.running) return this.running;
-    this.running = this.performScan(mode).finally(() => { this.running = null; });
+    const active: ActiveScan = {
+      runId: randomUUID(),
+      mode,
+      phase: 'discovering',
+      startedAt: Date.now(),
+      discovered: 0,
+      examined: 0,
+      processed: 0,
+      matched: 0,
+      unmatched: 0,
+      errors: 0,
+      cancelRequested: false,
+      cancelReason: null,
+      controller: new AbortController()
+    };
+    this.activeScan = active;
+    const running = this.performScan(active).finally(() => {
+      if (this.activeScan === active) this.activeScan = null;
+      if (this.running === running) this.running = null;
+    });
+    this.running = running;
     return this.running;
   }
 
   isRunning(): boolean { return Boolean(this.running); }
 
-  private async performScan(mode: ScanMode): Promise<void> {
-    const runId = randomUUID();
-    const startedAt = Date.now();
+  snapshot(): ScanProgressSnapshot | null {
+    const active = this.activeScan;
+    if (!active) return null;
+    const progressPercent = active.phase === 'discovering'
+      ? null
+      : active.discovered === 0
+        ? 100
+        : Math.min(100, Math.floor(active.examined / active.discovered * 100));
+    return {
+      mode: active.mode,
+      phase: active.phase,
+      status: active.cancelRequested ? 'cancelling' : 'running',
+      startedAt: active.startedAt,
+      elapsedMs: Math.max(0, Date.now() - active.startedAt),
+      discovered: active.discovered,
+      examined: active.examined,
+      processed: active.processed,
+      matched: active.matched,
+      unmatched: active.unmatched,
+      errors: active.errors,
+      progressPercent,
+      cancelRequested: active.cancelRequested
+    };
+  }
+
+  cancel(reason: 'administrator' | 'shutdown' = 'administrator'): boolean {
+    const active = this.activeScan;
+    if (!active || active.cancelRequested) return false;
+    active.cancelRequested = true;
+    active.cancelReason = reason;
+    active.controller.abort();
+    return true;
+  }
+
+  private async performScan(active: ActiveScan): Promise<void> {
+    const { runId, mode, startedAt } = active;
+    const signal = active.controller.signal;
     this.database.sqlite.prepare('INSERT INTO scan_runs (id,mode,status,started_at) VALUES (?,?,?,?)').run(runId, mode, 'running', startedAt);
+    try {
     const configuredRoots: Array<{ path: string; type: MediaType }> = [
       { path: this.settings.moviesPath, type: 'movie' },
       { path: this.settings.tvPath, type: 'series' },
@@ -94,49 +199,67 @@ export class MediaScanner {
 
     const files: FoundFile[] = [];
     const scannedRoots: Array<{ path: string; type: MediaType }> = [];
-    let errors = 0;
     for (const root of roots) {
+      signal.throwIfAborted();
       try {
         const stat = await fs.promises.stat(root.path);
         if (!stat.isDirectory()) throw new Error('not a directory');
-        files.push(...await walk(root.path, root.type, this.settings.minimumFileSizeMb * 1024 * 1024));
+        files.push(...await walk(
+          root.path,
+          root.type,
+          this.settings.minimumFileSizeMb * 1024 * 1024,
+          signal,
+          () => { active.discovered += 1; }
+        ));
         scannedRoots.push(root);
       } catch (error) {
-        errors += 1;
+        if (signal.aborted) throw error;
+        active.errors += 1;
         this.logger.warn({ libraryType: root.type, error: error instanceof Error ? error.message : String(error) }, 'Media directory is unavailable');
       }
     }
-    this.database.sqlite.prepare('UPDATE scan_runs SET discovered=?,errors=? WHERE id=?').run(files.length, errors, runId);
-    const limit = pLimit(this.config.scanConcurrency);
-    let processed = 0;
-    let matched = 0;
-    let unmatched = 0;
-    await Promise.all(files.map((file) => limit(async () => {
-      try {
-        const existing = this.database.sqlite.prepare('SELECT * FROM media_files WHERE absolute_path=?').get(file.absolutePath) as MediaFileRow | undefined;
-        if (mode !== 'full' && existing && existing.size === file.size && Math.abs(existing.mtime_ms - file.mtimeMs) < 1
-          && (existing.status !== 'unmatched' || Boolean(existing.manual_override))) {
-          this.database.sqlite.prepare('UPDATE media_files SET last_seen_at=? WHERE id=?').run(startedAt, existing.id);
-          if (existing.status === 'matched') matched += 1;
-          else if (existing.status === 'unmatched') unmatched += 1;
-          return;
+    active.discovered = files.length;
+    this.database.sqlite.prepare('UPDATE scan_runs SET discovered=?,errors=? WHERE id=?').run(files.length, active.errors, runId);
+    active.phase = 'processing';
+    let nextFile = 0;
+    const worker = async () => {
+      while (!signal.aborted) {
+        const index = nextFile;
+        nextFile += 1;
+        const file = files[index];
+        if (!file) return;
+        try {
+          const existing = this.database.sqlite.prepare('SELECT * FROM media_files WHERE absolute_path=?').get(file.absolutePath) as MediaFileRow | undefined;
+          if (mode !== 'full' && existing && existing.size === file.size && Math.abs(existing.mtime_ms - file.mtimeMs) < 1
+            && (existing.status !== 'unmatched' || Boolean(existing.manual_override))) {
+            this.database.sqlite.prepare('UPDATE media_files SET last_seen_at=? WHERE id=?').run(startedAt, existing.id);
+            if (existing.status === 'matched') active.matched += 1;
+            else if (existing.status === 'unmatched') active.unmatched += 1;
+          } else {
+            const result = await this.processFile(file, existing, startedAt, signal);
+            active.processed += 1;
+            if (result === 'matched') active.matched += 1;
+            if (result === 'unmatched') active.unmatched += 1;
+          }
+        } catch (error) {
+          if (signal.aborted) return;
+          active.processed += 1;
+          active.errors += 1;
+          this.recordFileError(file, startedAt, error);
+          this.logger.error({ file: file.relativePath }, 'Media scan item failed; details are available in the authenticated admin console');
         }
-        const result = await this.processFile(file, existing, startedAt);
-        processed += 1;
-        if (result === 'matched') matched += 1;
-        if (result === 'unmatched') unmatched += 1;
-      } catch (error) {
-        processed += 1;
-        errors += 1;
-        this.recordFileError(file, startedAt, error);
-        this.logger.error({ file: file.relativePath }, 'Media scan item failed; details are available in the authenticated admin console');
-      } finally {
+        active.examined += 1;
         this.database.sqlite.prepare('UPDATE scan_runs SET processed=?,matched=?,unmatched=?,errors=? WHERE id=?')
-          .run(processed, matched, unmatched, errors, runId);
+          .run(active.processed, active.matched, active.unmatched, active.errors, runId);
       }
-    })));
+    };
+    const workers = Math.min(files.length, Math.max(1, this.config.scanConcurrency));
+    await Promise.all(Array.from({ length: workers }, () => worker()));
+    signal.throwIfAborted();
 
+    active.phase = 'reconciling';
     for (const root of scannedRoots) {
+      signal.throwIfAborted();
       const rootPrefix = path.resolve(root.path) + path.sep;
 
       this.database.sqlite
@@ -158,12 +281,66 @@ export class MediaScanner {
         .reconcileAvailableFromLibrary();
 
     this.database.sqlite.prepare(`UPDATE scan_runs SET status='completed',finished_at=?,processed=?,matched=?,unmatched=?,errors=? WHERE id=?`)
-      .run(Date.now(), processed, matched, unmatched, errors, runId);
+      .run(Date.now(), active.processed, active.matched, active.unmatched, active.errors, runId);
     this.database.sqlite.prepare('DELETE FROM stream_tokens WHERE expires_at < ?').run(Date.now());
-    this.logger.info({ runId, discovered: files.length, processed, matched, unmatched, errors, requestsAdded }, 'Media scan completed');
+    this.logger.info({
+      runId,
+      discovered: files.length,
+      processed: active.processed,
+      matched: active.matched,
+      unmatched: active.unmatched,
+      errors: active.errors,
+      requestsAdded
+    }, 'Media scan completed');
+    } catch (error) {
+      if (signal.aborted) {
+        const message = active.cancelReason === 'shutdown'
+          ? 'Scan cancelled during graceful shutdown.'
+          : 'Scan cancelled by an administrator.';
+        this.database.sqlite.prepare(
+          `UPDATE scan_runs
+           SET status='cancelled',finished_at=?,discovered=?,processed=?,matched=?,unmatched=?,errors=?,message=?
+           WHERE id=?`
+        ).run(
+          Date.now(),
+          active.discovered,
+          active.processed,
+          active.matched,
+          active.unmatched,
+          active.errors,
+          message,
+          runId
+        );
+        this.logger.info({ runId, reason: active.cancelReason }, 'Media scan cancelled');
+        return;
+      }
+      active.errors += 1;
+      this.database.sqlite.prepare(
+        `UPDATE scan_runs
+         SET status='failed',finished_at=?,discovered=?,processed=?,matched=?,unmatched=?,errors=?,message=?
+         WHERE id=?`
+      ).run(
+        Date.now(),
+        active.discovered,
+        active.processed,
+        active.matched,
+        active.unmatched,
+        active.errors,
+        'Scan failed before completion.',
+        runId
+      );
+      this.logger.error({ runId, error }, 'Media scan failed');
+      throw error;
+    }
   }
 
-  private async processFile(file: FoundFile, existing: MediaFileRow | undefined, scanTime: number): Promise<'matched' | 'unmatched' | 'ignored'> {
+  private async processFile(
+    file: FoundFile,
+    existing: MediaFileRow | undefined,
+    scanTime: number,
+    signal: AbortSignal
+  ): Promise<'matched' | 'unmatched' | 'ignored'> {
+    signal.throwIfAborted();
     const fileChanged = Boolean(existing) && (
       existing!.size !== file.size ||
       Math.abs(existing!.mtime_ms - file.mtimeMs) >= 1
@@ -171,7 +348,8 @@ export class MediaScanner {
     const parsedMovie = file.type === 'movie' ? parseMovieFilename(file.relativePath) : null;
     const parsedEpisode = file.type === 'series' ? parseEpisodeFilename(file.relativePath) : null;
     const parsedTitle = parsedMovie?.title || parsedEpisode?.title || path.basename(file.relativePath, path.extname(file.relativePath));
-    const probe = await inspectMedia(file.absolutePath, this.config.ffprobePath);
+    const probe = await inspectMedia(file.absolutePath, this.config.ffprobePath, signal);
+    signal.throwIfAborted();
     let mediaItemId = existing?.manual_override ? existing.media_item_id : null;
     let confidence = existing?.manual_override ? existing.confidence : null;
     let status: 'matched' | 'unmatched' | 'ignored' = existing?.manual_override && existing.status === 'ignored'
@@ -179,18 +357,22 @@ export class MediaScanner {
     if (!existing?.manual_override && !mediaItemId && (parsedMovie || parsedEpisode)) {
       const parsedYear = parsedMovie?.year || parsedEpisode?.year;
       const results = await this.tmdb.search(file.type, parsedTitle, parsedYear);
+      signal.throwIfAborted();
       const best = results[0];
       confidence = best?.confidence ?? null;
       if (best && (best.confidence ?? 0) >= 0.78) {
         try {
           mediaItemId = await this.tmdb.ensureMediaItem(file.type, best);
+          signal.throwIfAborted();
           status = 'matched';
           if (file.type === 'series' && parsedEpisode) await this.tmdb.ensureEpisodeMetadata(mediaItemId, best, parsedEpisode.season);
         } catch (error) {
+          if (signal.aborted) throw error;
           this.logger.warn({ title: parsedTitle, provider: best.provider, error: error instanceof Error ? error.message : String(error) },
             'Online metadata details were unavailable; using local metadata');
         }
       }
+      signal.throwIfAborted();
       if (!mediaItemId) {
         mediaItemId = this.tmdb.ensureLocalMediaItem(file.type, parsedTitle, parsedYear);
         confidence = best?.confidence ?? 0.5;
@@ -201,6 +383,7 @@ export class MediaScanner {
         }
       }
     }
+    signal.throwIfAborted();
     const id = existing?.id || stableFileId(file.type, file.absolutePath);
     const now = Date.now();
     this.database.sqlite.prepare(`INSERT INTO media_files (
@@ -227,11 +410,16 @@ export class MediaScanner {
         existing?.manual_override ?? 0, status, probe.compatibilityWarning, null, existing?.added_at || now, now, scanTime
       );
     if (fileChanged) this.siloMappings?.markStale(id);
-    await this.updateExternalSubtitles(id, file);
+    signal.throwIfAborted();
+    await this.updateExternalSubtitles(id, file, signal);
     return status;
   }
 
-  private async updateExternalSubtitles(mediaFileId: string, file: FoundFile): Promise<void> {
+  private async updateExternalSubtitles(
+    mediaFileId: string,
+    file: FoundFile,
+    signal: AbortSignal
+  ): Promise<void> {
     const directory = path.dirname(file.absolutePath);
     const stem = path.basename(file.absolutePath, path.extname(file.absolutePath));
     const escaped = stem.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -239,10 +427,12 @@ export class MediaScanner {
     const names = await fs.promises.readdir(directory);
     const seen: string[] = [];
     for (const name of names) {
+      signal.throwIfAborted();
       const match = pattern.exec(name);
       if (!match) continue;
       const absolutePath = path.join(directory, name);
       const stat = await fs.promises.stat(absolutePath);
+      signal.throwIfAborted();
       const id = `sub_${createHash('sha256').update(absolutePath).digest('hex').slice(0, 24)}`;
       seen.push(id);
       this.database.sqlite.prepare(`INSERT INTO external_subtitles
@@ -283,7 +473,11 @@ export class MediaScanner {
 
   startSchedules(): void {
     if (this.timer) clearInterval(this.timer);
-    this.timer = setInterval(() => void this.scan('changed'), this.settings.scanIntervalMinutes * 60_000);
+    this.timer = setInterval(() => {
+      void this.scan('changed').catch((error) => {
+        this.logger.error({ error }, 'Scheduled media scan failed');
+      });
+    }, this.settings.scanIntervalMinutes * 60_000);
     this.timer.unref();
     if (this.config.watch) {
       const watchRoots = [
@@ -303,7 +497,11 @@ export class MediaScanner {
       });
       const schedule = () => {
         if (this.watchDebounce) clearTimeout(this.watchDebounce);
-        this.watchDebounce = setTimeout(() => void this.scan('watcher'), 2_000);
+        this.watchDebounce = setTimeout(() => {
+          void this.scan('watcher').catch((error) => {
+            this.logger.error({ error }, 'Watcher media scan failed');
+          });
+        }, 2_000);
       };
       this.watcher.on('add', schedule).on('change', schedule).on('unlink', schedule).on('error', (error) => this.logger.warn({ error }, 'Media watcher error'));
     }
@@ -321,6 +519,7 @@ export class MediaScanner {
     if (this.timer) clearInterval(this.timer);
     if (this.watchDebounce) clearTimeout(this.watchDebounce);
     if (this.watcher) await this.watcher.close();
-    if (this.running) await Promise.race([this.running, delay(20_000)]);
+    this.cancel('shutdown');
+    if (this.running) await this.running.catch(() => {});
   }
 }
