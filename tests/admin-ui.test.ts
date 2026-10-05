@@ -180,6 +180,75 @@ describe('media details modal', () => {
       .toBe('true');
   });
 
+  it('loads and renders sanitized system health only when opened', async () => {
+    const health = {
+      status: 'degraded',
+      generatedAt: Date.now(),
+      expiresAt: Date.now() + 60_000,
+      build: { version: '1.1.1', revision: 'health123' },
+      uptimeSeconds: 3720,
+      checks: [
+        {
+          id: 'database', label: 'Database integrity', status: 'healthy',
+          summary: 'SQLite quick check passed.', latencyMs: 2
+        },
+        {
+          id: 'scanner', label: 'Library scanner', status: 'warning',
+          summary: 'No library scan has completed yet.', latencyMs: null
+        },
+        {
+          id: 'fallback_addon', label: 'Fallback addon', status: 'disabled',
+          summary: 'Fallback addon integration is disabled.', latencyMs: null
+        }
+      ],
+      operations: {
+        scanner: { running: false },
+        silo: {
+          activeSessions: 1, pendingSessions: 0, activeStarts: 1,
+          queuedStarts: 0, maxConcurrentStarts: 2, maxQueuedStarts: 4
+        },
+        fallback: { active: 0, transfers: 0 }
+      },
+      recentOutcomes: {
+        windowMinutes: 60, total: 3, warnings: 1, errors: 0,
+        byFailureDomain: { capacity: 1 }
+      }
+    };
+    const fetchMock = vi.fn(async (input: string | URL | Request) => {
+      if (String(input) === '/admin/api/state') return json(appState());
+      if (String(input).startsWith('/admin/api/system-health')) return json(health);
+      return json({ error: 'Unexpected request' }, 500);
+    });
+    install(fetchMock);
+    await flush();
+
+    expect(fetchMock).not.toHaveBeenCalledWith('/admin/api/system-health', expect.anything());
+    document.querySelector<HTMLButtonElement>('[data-view="health"]')!.click();
+    await flush();
+
+    expect(document.querySelector('#healthSummary')?.textContent)
+      .toContain('System needs attention');
+    expect(document.querySelector('#healthChecks')?.textContent)
+      .toContain('Database integrity');
+    expect(document.querySelector('#healthChecks')?.textContent)
+      .toContain('Fallback addon integration is disabled.');
+    expect(document.querySelector('#healthOperations')?.textContent)
+      .toContain('1 / 2');
+    expect(document.querySelector('#healthOutcomeSummary')?.textContent)
+      .toContain('capacity 1');
+    expect(document.querySelector('#diagnosticsJson')?.textContent)
+      .toContain('"status": "degraded"');
+    expect(document.querySelector<HTMLButtonElement>('#copyDiagnostics')?.disabled)
+      .toBe(false);
+
+    document.querySelector<HTMLButtonElement>('[data-refresh-health]')!.click();
+    await flush();
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/admin/api/system-health?refresh=1',
+      expect.objectContaining({ headers: expect.any(Object) })
+    );
+  });
+
   it('saves values from every Settings panel in one request', async () => {
     let saved: Record<string, unknown> | undefined;
     const fetchMock = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {

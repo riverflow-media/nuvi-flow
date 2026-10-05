@@ -263,6 +263,24 @@ the declared SDR target.
 - Provide keyboard-operable tabs, explicit selected/current-page state, and
   horizontally scrollable navigation on narrow screens
 
+## Completed system health diagnostics foundation
+
+- Add an authenticated **System health** workspace covering SQLite integrity,
+  configured media-root readability, scanner state, runtime-secret length,
+  Silo/profile availability, optional fallback-addon compatibility, playback
+  admission state, and recent outcome classifications
+- Keep integration checks strictly on demand. Coalesce concurrent requests and
+  cache the complete snapshot for one minute so opening the dashboard cannot
+  recreate idle profile or manifest polling
+- Preserve the lightweight public `/health` contract used by Docker. Optional
+  Silo or fallback-addon outages are visible to administrators without making
+  the Nuvi-Flow container itself fail its liveness check
+- Return a fixed, sanitized contract with aggregate operation/outcome counts.
+  Filesystem paths, integration URLs, credentials, tokens, internal session
+  IDs, upstream error strings, and raw device identities have no response field
+- Provide responsive status cards, explicit manual refresh, and a copyable JSON
+  diagnostic bundle for support and deployment troubleshooting
+
 ## Optional future features
 
 - Optional per-user Silo statistics integration. Keep the default single-user

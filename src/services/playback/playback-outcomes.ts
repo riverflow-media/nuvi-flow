@@ -50,6 +50,13 @@ export interface PlaybackOutcome {
   lastObservedAt: number;
 }
 
+export interface PlaybackOutcomeSummary {
+  total: number;
+  warnings: number;
+  errors: number;
+  byFailureDomain: Record<string, number>;
+}
+
 interface PlaybackOutcomeStoreOptions {
   now?: () => number;
   retentionMs?: number;
@@ -189,6 +196,37 @@ export class PlaybackOutcomeStore {
       this.now() - this.retentionMs,
       boundedLimit
     ) as PlaybackOutcomeRow[]).map(toOutcome);
+  }
+
+  summarySince(since: number): PlaybackOutcomeSummary {
+    const threshold = Number.isFinite(since) ? Math.trunc(since) : this.now();
+    const rows = this.database.sqlite.prepare(
+      `SELECT level,failure_domain,COUNT(*) count
+       FROM playback_outcomes
+       WHERE last_observed_at>=?
+       GROUP BY level,failure_domain`
+    ).all(threshold) as Array<{
+      level: PlaybackOutcomeLevel;
+      failure_domain: PlaybackOutcomeDomain;
+      count: number;
+    }>;
+    const summary: PlaybackOutcomeSummary = {
+      total: 0,
+      warnings: 0,
+      errors: 0,
+      byFailureDomain: {}
+    };
+    for (const row of rows) {
+      const count = Math.max(0, Number(row.count) || 0);
+      summary.total += count;
+      if (row.level === 'warning') summary.warnings += count;
+      if (row.level === 'error') summary.errors += count;
+      if (row.failure_domain !== 'none') {
+        summary.byFailureDomain[row.failure_domain] =
+          (summary.byFailureDomain[row.failure_domain] || 0) + count;
+      }
+    }
+    return summary;
   }
 
   cleanup(): number {

@@ -153,6 +153,58 @@ describe('admin media detail API', () => {
     transfer.finish();
   });
 
+  it('returns authenticated, cached, and sanitized system diagnostics', async () => {
+    built.settings.set('siloEnabled', 'true');
+    built.settings.set('siloUrl', 'http://private-silo.internal:8080');
+    built.settings.set('siloApiKey', 'private-silo-api-key');
+    built.settings.set('siloProfileId', 'profile-1');
+    built.systemDiagnostics.invalidate();
+    const testConnection = vi.spyOn(built.silo, 'testConnection')
+      .mockResolvedValue({
+        health: { status: 'ok', server_name: 'Test Silo', server_id: 'secret-server-id' },
+        profiles: [{ id: 'profile-1', name: 'Living room', primary: true }]
+      });
+
+    expect((await built.app.inject({
+      method: 'GET', url: '/admin/api/system-health'
+    })).statusCode).toBe(401);
+
+    const refreshed = await request(
+      'GET',
+      '/admin/api/system-health?refresh=1'
+    );
+    expect(refreshed.statusCode).toBe(200);
+    expect(refreshed.json()).toMatchObject({
+      status: 'degraded',
+      build: { version: '1.1.1' },
+      operations: {
+        scanner: { running: false },
+        silo: {
+          activeSessions: 0,
+          queuedStarts: 0,
+          maxConcurrentStarts: 2
+        },
+        fallback: { active: 0, transfers: 0 }
+      },
+      checks: expect.arrayContaining([
+        expect.objectContaining({ id: 'database', status: 'healthy' }),
+        expect.objectContaining({ id: 'movies_root', status: 'healthy' }),
+        expect.objectContaining({ id: 'silo', status: 'healthy' }),
+        expect.objectContaining({ id: 'fallback_addon', status: 'disabled' })
+      ])
+    });
+    expect(testConnection).toHaveBeenCalledTimes(1);
+
+    const cached = await request('GET', '/admin/api/system-health');
+    expect(cached.statusCode).toBe(200);
+    expect(cached.json().generatedAt).toBe(refreshed.json().generatedAt);
+    expect(testConnection).toHaveBeenCalledTimes(1);
+    expect(cached.body).not.toContain('private-silo-api-key');
+    expect(cached.body).not.toContain('private-silo.internal');
+    expect(cached.body).not.toContain('secret-server-id');
+    expect(cached.body).not.toContain(directory);
+  });
+
   it('requires CSRF and stops only an active playback ID', async () => {
     const stopSilo = vi.spyOn(built.playback, 'stopPlayback')
       .mockResolvedValue(true);

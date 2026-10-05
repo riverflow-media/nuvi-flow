@@ -37,6 +37,7 @@ import type {
   PlaybackOutcomeStore
 } from '../services/playback/playback-outcomes.js';
 import type { PlaybackService } from '../services/playback/playback-service.js';
+import type { SystemDiagnosticsService } from '../services/system-diagnostics.js';
 
 const COOKIE_NAME = 'nuviflow_admin';
 
@@ -292,7 +293,8 @@ export function registerAdminRoutes(
   playback: PlaybackService,
   playbackActivity: PlaybackActivityService,
   deviceCapabilities: DeviceCapabilityStore,
-  playbackOutcomes: PlaybackOutcomeStore
+  playbackOutcomes: PlaybackOutcomeStore,
+  systemDiagnostics: SystemDiagnosticsService
 ): void {
   app.get('/admin/login', async (request, reply) => {
     if (sessionFor(request, config)) return reply.redirect('/admin');
@@ -334,6 +336,17 @@ export function registerAdminRoutes(
       started_at startedAt,finished_at finishedAt,message FROM scan_runs ORDER BY started_at DESC LIMIT 100`).all();
     const publicFiles = files.map(publicFile);
     return reply.header('Cache-Control', 'no-store').send({ counts, files: publicFiles, recent: publicFiles.slice(0, 12), logs, settings: settings.publicView(), build: buildInfo(), scanning: scanner.isRunning() });
+  });
+
+  app.get('/admin/api/system-health', {
+    preHandler: requireAdmin(config),
+    config: { rateLimit: { max: 12, timeWindow: '1 minute' } }
+  }, async (request, reply) => {
+    const query = request.query as { refresh?: string };
+    const snapshot = await systemDiagnostics.snapshot(
+      query.refresh === '1' || query.refresh === 'true'
+    );
+    return reply.header('Cache-Control', 'no-store').send(snapshot);
   });
 
   app.get('/admin/api/activity', {
@@ -606,6 +619,7 @@ export function registerAdminRoutes(
     const mode = (request.body as { mode?: string })?.mode === 'full' ? 'full' : 'changed';
     if (scanner.isRunning()) return reply.code(409).send({ error: 'A scan is already running' });
     void scanner.scan(mode).catch((error) => request.log.error({ error }, 'Manual scan failed'));
+    systemDiagnostics.invalidate();
     return reply.code(202).send({ ok: true, mode });
   });
 
@@ -1135,6 +1149,7 @@ export function registerAdminRoutes(
       settings.set('adminPasswordHash', await hashPassword(body.newPassword));
     }
     await scanner.reloadSchedules();
+    systemDiagnostics.invalidate();
     return reply.send({ ok: true, settings: settings.publicView() });
   });
 }

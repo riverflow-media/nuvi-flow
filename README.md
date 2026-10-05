@@ -398,6 +398,10 @@ The password-protected dashboard provides:
 - Custom addon icon
 - Secure addon URL display and one-click regeneration
 - Running version and Git commit identity in the lower-left server status card
+- On-demand System Health checks for SQLite integrity, configured media roots,
+  scanner state, Silo, the optional fallback addon, and playback admission state
+- A copyable diagnostic bundle containing only sanitized operational data and
+  one-hour playback outcome aggregates
 - General, Requests, Playback, Fallback, and Security settings workspaces with
   one atomic save action
 
@@ -407,7 +411,15 @@ and saves every workspace together. If a required value is missing in another
 workspace, Nuvi-Flow opens that workspace automatically so the problem is
 visible.
 
-Saved Radarr and Sonarr API keys are never returned to the browser.
+System Health runs only when the page is opened or **Run checks** is selected.
+External checks are single-flight and cached for one minute, so diagnostics do
+not create background integration polling. The lightweight public `/health`
+container endpoint remains independent of optional integrations.
+
+Saved Radarr, Sonarr, and Silo API keys and the private fallback-addon manifest
+URL are never returned to the browser. The diagnostic bundle also excludes
+filesystem paths, upstream URLs, signed tokens, internal session IDs, and raw
+device identities.
 
 ## Docker
 

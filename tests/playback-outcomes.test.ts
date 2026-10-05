@@ -77,6 +77,41 @@ describe('PlaybackOutcomeStore', () => {
     expect(store.recent()[0]?.reason).toBeNull();
   });
 
+  it('aggregates every retained observation without the recent-list limit', () => {
+    const now = 200_000;
+    const { store } = create({
+      now: () => now,
+      maxRows: 1_000,
+      cleanupEvery: 1_000
+    });
+    for (let index = 0; index < 205; index += 1) {
+      store.record({
+        playbackId: `warning-${index}`,
+        code: 'capacity_unavailable',
+        provider: 'silo',
+        route: 'server_transcode_hls',
+        level: 'warning',
+        failureDomain: 'capacity'
+      });
+    }
+    store.record({
+      playbackId: 'error-1',
+      code: 'upstream_unavailable',
+      provider: 'fallback-addon',
+      route: 'external_direct_http',
+      level: 'error',
+      failureDomain: 'transport'
+    });
+
+    expect(store.recent(1_000)).toHaveLength(200);
+    expect(store.summarySince(now - 1)).toEqual({
+      total: 206,
+      warnings: 205,
+      errors: 1,
+      byFailureDomain: { capacity: 205, transport: 1 }
+    });
+  });
+
   it('prunes expired and overflow observations', () => {
     let now = 100_000;
     const { store } = create({

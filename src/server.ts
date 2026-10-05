@@ -29,6 +29,7 @@ import { RequestService } from './services/requester.js';
 import { SiloService } from './services/silo-service.js';
 import { SiloFileMappingStore } from './services/silo-file-mappings.js';
 import { SettingsService } from './services/settings.js';
+import { SystemDiagnosticsService } from './services/system-diagnostics.js';
 import { TmdbService } from './services/tmdb.js';
 
 export interface BuiltApp {
@@ -46,6 +47,7 @@ export interface BuiltApp {
   networkProfiles: NetworkProfileStore;
   playbackActivity: PlaybackActivityService;
   playbackOutcomes: PlaybackOutcomeStore;
+  systemDiagnostics: SystemDiagnosticsService;
 }
 
 export async function buildApp(config: AppConfig): Promise<BuiltApp> {
@@ -204,6 +206,16 @@ export async function buildApp(config: AppConfig): Promise<BuiltApp> {
   requester.setLibraryRescanHandler(
     () => scanner.scan('changed')
   );
+  const systemDiagnostics = new SystemDiagnosticsService(
+    database,
+    settings,
+    scanner,
+    silo,
+    fallbackAddon,
+    playback,
+    playbackOutcomes,
+    config
+  );
 
   app.addHook('onRequest', async (request, reply) => {
     if (request.url.startsWith('/admin')) return;
@@ -261,7 +273,8 @@ export async function buildApp(config: AppConfig): Promise<BuiltApp> {
     playback,
     playbackActivity,
     deviceCapabilities,
-    playbackOutcomes
+    playbackOutcomes,
+    systemDiagnostics
   );
   app.setNotFoundHandler(async (_request, reply) => reply.code(404).send({ error: 'Not found' }));
   app.setErrorHandler(async (error, request, reply) => {
@@ -284,6 +297,7 @@ export async function buildApp(config: AppConfig): Promise<BuiltApp> {
     fallbackAddon,
     networkProfiles,
     playbackActivity,
-    playbackOutcomes
+    playbackOutcomes,
+    systemDiagnostics
   };
 }
