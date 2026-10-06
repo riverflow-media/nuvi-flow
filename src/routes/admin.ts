@@ -38,6 +38,7 @@ import type {
 } from '../services/playback/playback-outcomes.js';
 import type { PlaybackService } from '../services/playback/playback-service.js';
 import type { SystemDiagnosticsService } from '../services/system-diagnostics.js';
+import type { DatabaseBackupService } from '../services/database-backups.js';
 
 const COOKIE_NAME = 'nuviflow_admin';
 
@@ -294,6 +295,7 @@ export function registerAdminRoutes(
   playbackActivity: PlaybackActivityService,
   deviceCapabilities: DeviceCapabilityStore,
   playbackOutcomes: PlaybackOutcomeStore,
+  databaseBackups: DatabaseBackupService,
   systemDiagnostics: SystemDiagnosticsService
 ): void {
   app.get('/admin/login', async (request, reply) => {
@@ -373,6 +375,50 @@ export function registerAdminRoutes(
       query.refresh === '1' || query.refresh === 'true'
     );
     return reply.header('Cache-Control', 'no-store').send(snapshot);
+  });
+
+  app.get('/admin/api/backups', {
+    preHandler: requireAdmin(config),
+    config: { rateLimit: { max: 60, timeWindow: '1 minute' } }
+  }, async (_request, reply) => {
+    const snapshot = await databaseBackups.snapshot();
+    return reply.header('Cache-Control', 'no-store').send(snapshot);
+  });
+
+  app.post('/admin/api/backups', {
+    preHandler: requireAdmin(config, true),
+    config: { rateLimit: { max: 6, timeWindow: '1 minute' } }
+  }, async (_request, reply) => {
+    const created = await databaseBackups.create('manual');
+    systemDiagnostics.invalidate();
+    const snapshot = await databaseBackups.snapshot();
+    return reply.header('Cache-Control', 'no-store').send({
+      ...snapshot,
+      created
+    });
+  });
+
+  app.get('/admin/api/backups/:id/download', {
+    preHandler: requireAdmin(config),
+    config: { rateLimit: { max: 12, timeWindow: '1 minute' } }
+  }, async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const opened = await databaseBackups.open(id);
+    if (!opened) {
+      return reply.code(404).send({ error: 'Database backup not found.' });
+    }
+    const timestamp = new Date(opened.backup.createdAt)
+      .toISOString()
+      .replaceAll(':', '-')
+      .replace('.000Z', 'Z');
+    return reply
+      .header('Cache-Control', 'no-store')
+      .header('X-Content-Type-Options', 'nosniff')
+      .header('Content-Security-Policy', "default-src 'none'")
+      .header('Content-Disposition', `attachment; filename="nuvi-flow-backup-${timestamp}.sqlite"`)
+      .header('Content-Length', String(opened.backup.sizeBytes))
+      .type('application/vnd.sqlite3')
+      .send(opened.stream);
   });
 
   app.get('/admin/api/activity', {

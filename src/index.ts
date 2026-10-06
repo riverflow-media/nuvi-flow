@@ -2,7 +2,7 @@ import { loadConfig, validateProductionSecrets } from './config.js';
 import { buildApp } from './server.js';
 
 const config = loadConfig();
-const { app, database, scanner } = await buildApp(config);
+const { app, database, scanner, databaseBackups } = await buildApp(config);
 
 for (const warning of validateProductionSecrets(config)) app.log.warn(warning);
 
@@ -12,6 +12,7 @@ async function shutdown(signal: string): Promise<void> {
   closing = true;
   app.log.info({ signal }, 'Graceful shutdown started');
   await scanner.stop();
+  await databaseBackups.stop();
   await app.close();
   database.close();
 }
@@ -21,6 +22,7 @@ process.once('SIGINT', () => void shutdown('SIGINT'));
 
 try {
   await app.listen({ port: config.port, host: config.host });
+  databaseBackups.startSchedules();
   scanner.startSchedules();
   if (config.scanOnStartup) void scanner.scan('startup').catch((error) => app.log.error({ error }, 'Startup scan failed'));
 } catch (error) {

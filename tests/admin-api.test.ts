@@ -205,6 +205,59 @@ describe('admin media detail API', () => {
     expect(cached.body).not.toContain(directory);
   });
 
+  it('creates, lists, and downloads verified backups without exposing storage paths', async () => {
+    expect((await built.app.inject({
+      method: 'GET', url: '/admin/api/backups'
+    })).statusCode).toBe(401);
+    expect((await built.app.inject({
+      method: 'POST',
+      url: '/admin/api/backups',
+      headers: { cookie }
+    })).statusCode).toBe(403);
+
+    built.database.setSetting('backup_test_marker', 'captured');
+    const created = await request('POST', '/admin/api/backups');
+    expect(created.statusCode).toBe(200);
+    expect(created.json()).toMatchObject({
+      running: false,
+      automatic: { enabled: true, intervalHours: 24, retention: 7 },
+      created: { reason: 'manual', integrity: 'verified' },
+      backups: [expect.objectContaining({ reason: 'manual', integrity: 'verified' })]
+    });
+    const backupId = created.json().created.id as string;
+    expect(backupId).toMatch(/^\d{13}-[a-f0-9]{8}$/);
+    expect(created.body).not.toContain(directory);
+    expect(created.body).not.toContain('test.db');
+
+    const listed = await request('GET', '/admin/api/backups');
+    expect(listed.statusCode).toBe(200);
+    expect(listed.json().latest.id).toBe(backupId);
+
+    const downloaded = await request(
+      'GET',
+      `/admin/api/backups/${encodeURIComponent(backupId)}/download`
+    );
+    expect(downloaded.statusCode).toBe(200);
+    expect(downloaded.headers['content-type']).toContain('application/vnd.sqlite3');
+    expect(downloaded.headers['content-disposition']).toMatch(
+      /^attachment; filename="nuvi-flow-backup-.*\.sqlite"$/
+    );
+    expect(downloaded.headers['content-disposition']).not.toContain('test.db');
+    expect(downloaded.rawPayload.subarray(0, 16).toString('utf8'))
+      .toBe('SQLite format 3\0');
+
+    expect((await request(
+      'GET',
+      '/admin/api/backups/0000000000000-deadbeef/download'
+    )).statusCode).toBe(404);
+
+    const health = await request('GET', '/admin/api/system-health?refresh=1');
+    expect(health.json().checks).toContainEqual(expect.objectContaining({
+      id: 'database_backups',
+      status: 'healthy'
+    }));
+  });
+
   it('returns live scan progress and requires CSRF to cancel it', async () => {
     const current = {
       mode: 'full' as const,

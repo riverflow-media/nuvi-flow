@@ -11,6 +11,9 @@ export interface AppConfig {
   sessionSecret: string;
   streamSecret: string;
   databasePath: string;
+  databaseBackupEnabled: boolean;
+  databaseBackupIntervalHours: number;
+  databaseBackupRetention: number;
   moviesPath: string;
   tvPath: string;
   animePath: string;
@@ -91,6 +94,17 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     sessionSecret: env.SESSION_SECRET || 'development-session-secret-change-me',
     streamSecret: env.STREAM_SECRET || 'development-stream-secret-change-me',
     databasePath,
+    databaseBackupEnabled: booleanValue(env.DATABASE_BACKUP_ENABLED, true),
+    databaseBackupIntervalHours: Math.min(720, numberValue(
+      env.DATABASE_BACKUP_INTERVAL_HOURS,
+      24,
+      1
+    )),
+    databaseBackupRetention: Math.min(30, Math.floor(numberValue(
+      env.DATABASE_BACKUP_RETENTION,
+      7,
+      1
+    ))),
     moviesPath: env.MOVIES_PATH || '/media/movies',
     tvPath: env.TV_PATH || '/media/tv',
     animePath: env.ANIME_PATH?.trim() || '',

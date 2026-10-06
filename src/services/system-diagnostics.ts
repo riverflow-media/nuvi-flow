@@ -8,6 +8,7 @@ import type { SiloService } from './silo-service.js';
 import type { FallbackAddonService } from './playback/fallback-addon.js';
 import type { PlaybackOutcomeStore } from './playback/playback-outcomes.js';
 import type { PlaybackService } from './playback/playback-service.js';
+import type { DatabaseBackupService } from './database-backups.js';
 
 export type SystemDiagnosticStatus =
   | 'healthy'
@@ -99,6 +100,7 @@ export class SystemDiagnosticsService {
     private readonly fallbackAddon: FallbackAddonService,
     private readonly playback: PlaybackService,
     private readonly playbackOutcomes: PlaybackOutcomeStore,
+    private readonly databaseBackups: DatabaseBackupService,
     private readonly config: AppConfig,
     options: SystemDiagnosticsOptions = {}
   ) {
@@ -136,6 +138,7 @@ export class SystemDiagnosticsService {
     const recentOutcomes = this.recentOutcomeSummary(generatedAt);
     const checks = await Promise.all([
       this.databaseCheck(),
+      this.databaseBackupCheck(),
       this.libraryRootCheck('movies_root', 'Movies library', this.settings.moviesPath),
       this.libraryRootCheck('tv_root', 'TV library', this.settings.tvPath),
       this.libraryRootCheck('anime_root', 'Anime library', this.settings.animePath, true),
@@ -203,6 +206,71 @@ export class SystemDiagnosticsService {
         label: 'Database integrity',
         status: 'error',
         summary: 'The database integrity check could not run.',
+        latencyMs: this.elapsed(startedAt)
+      };
+    }
+  }
+
+  private async databaseBackupCheck(): Promise<SystemDiagnosticCheck> {
+    const startedAt = this.now();
+    try {
+      const snapshot = await this.databaseBackups.snapshot();
+      if (!snapshot.automatic.enabled) {
+        return {
+          id: 'database_backups',
+          label: 'Database backups',
+          status: 'disabled',
+          summary: snapshot.backups.length
+            ? `Automatic backups are disabled; ${snapshot.backups.length} verified backup${snapshot.backups.length === 1 ? '' : 's'} retained.`
+            : 'Automatic backups are disabled; manual backups remain available.',
+          latencyMs: this.elapsed(startedAt)
+        };
+      }
+      if (snapshot.running) {
+        return {
+          id: 'database_backups',
+          label: 'Database backups',
+          status: 'healthy',
+          summary: 'A live database backup is being created and verified.',
+          latencyMs: this.elapsed(startedAt)
+        };
+      }
+      if (snapshot.lastError) {
+        return {
+          id: 'database_backups',
+          label: 'Database backups',
+          status: 'warning',
+          summary: snapshot.lastError.message,
+          latencyMs: this.elapsed(startedAt)
+        };
+      }
+      if (!snapshot.latest) {
+        return {
+          id: 'database_backups',
+          label: 'Database backups',
+          status: 'warning',
+          summary: 'No verified database backup exists yet.',
+          latencyMs: this.elapsed(startedAt)
+        };
+      }
+      const ageHours = Math.max(0, (this.now() - snapshot.latest.createdAt) / (60 * 60_000));
+      const overdue = snapshot.automatic.nextDueAt != null &&
+        snapshot.automatic.nextDueAt + 5 * 60_000 < this.now();
+      return {
+        id: 'database_backups',
+        label: 'Database backups',
+        status: overdue ? 'warning' : 'healthy',
+        summary: overdue
+          ? 'The latest verified database backup is overdue.'
+          : `Latest verified backup is ${ageHours < 1 ? 'less than one hour' : `${Math.floor(ageHours)} hour${Math.floor(ageHours) === 1 ? '' : 's'}`} old; ${snapshot.backups.length} retained.`,
+        latencyMs: this.elapsed(startedAt)
+      };
+    } catch {
+      return {
+        id: 'database_backups',
+        label: 'Database backups',
+        status: 'error',
+        summary: 'Backup storage could not be inspected.',
         latencyMs: this.elapsed(startedAt)
       };
     }

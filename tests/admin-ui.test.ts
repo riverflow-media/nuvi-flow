@@ -250,6 +250,69 @@ describe('media details modal', () => {
     );
   });
 
+  it('loads backup operations on demand and creates a recovery point', async () => {
+    const createdAt = Date.now() - 60_000;
+    let backups: any = {
+      running: false,
+      automatic: {
+        enabled: true,
+        intervalHours: 24,
+        retention: 7,
+        nextDueAt: Date.now() + 24 * 60 * 60_000
+      },
+      latest: null,
+      backups: [],
+      lastError: null
+    };
+    const fetchMock = vi.fn(async (
+      input: string | URL | Request,
+      init?: RequestInit
+    ) => {
+      if (String(input) === '/admin/api/state') return json(appState());
+      if (String(input) === '/admin/api/backups' && init?.method === 'POST') {
+        const backup = {
+          id: '1800000000000-deadbeef',
+          createdAt,
+          sizeBytes: 2_621_440,
+          reason: 'manual',
+          integrity: 'verified'
+        };
+        backups = { ...backups, latest: backup, backups: [backup] };
+        return json({ ...backups, created: backup });
+      }
+      if (String(input) === '/admin/api/backups') return json(backups);
+      return json({ error: 'Unexpected request' }, 500);
+    });
+    install(fetchMock);
+    await flush();
+
+    expect(fetchMock).not.toHaveBeenCalledWith('/admin/api/backups', expect.anything());
+    document.querySelector<HTMLButtonElement>('[data-view="backups"]')!.click();
+    await flush();
+    expect(document.querySelector('#backupSummary')?.textContent)
+      .toContain('No verified backup yet');
+    expect(document.querySelector('#backupStats')?.textContent)
+      .toContain('every 24 hours');
+
+    document.querySelector<HTMLButtonElement>('[data-create-backup]')!.click();
+    await flush();
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/admin/api/backups',
+      expect.objectContaining({
+        method: 'POST',
+        headers: expect.objectContaining({ 'x-csrf-token': 'test-csrf' })
+      })
+    );
+    expect(document.querySelector('#backupSummary')?.textContent)
+      .toContain('Recovery points ready');
+    expect(document.querySelector('#backupRows')?.textContent)
+      .toContain('Manual');
+    expect(document.querySelector('#backupRows')?.textContent)
+      .toContain('2.50 MB');
+    expect(document.querySelector<HTMLAnchorElement>('#backupRows a')?.href)
+      .toContain('/admin/api/backups/1800000000000-deadbeef/download');
+  });
+
   it('renders live scan progress and safely requests cancellation', async () => {
     const running = {
       mode: 'full', phase: 'processing', status: 'running',

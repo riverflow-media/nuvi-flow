@@ -30,6 +30,7 @@ import { SiloService } from './services/silo-service.js';
 import { SiloFileMappingStore } from './services/silo-file-mappings.js';
 import { SettingsService } from './services/settings.js';
 import { SystemDiagnosticsService } from './services/system-diagnostics.js';
+import { DatabaseBackupService } from './services/database-backups.js';
 import { TmdbService } from './services/tmdb.js';
 
 export interface BuiltApp {
@@ -47,6 +48,7 @@ export interface BuiltApp {
   networkProfiles: NetworkProfileStore;
   playbackActivity: PlaybackActivityService;
   playbackOutcomes: PlaybackOutcomeStore;
+  databaseBackups: DatabaseBackupService;
   systemDiagnostics: SystemDiagnosticsService;
 }
 
@@ -82,6 +84,7 @@ export async function buildApp(config: AppConfig): Promise<BuiltApp> {
   });
   await app.register(rateLimit, { global: false, keyGenerator: (request) => request.ip });
   const database = new AppDatabase(config.databasePath);
+  const databaseBackups = new DatabaseBackupService(database, config, app.log);
   const settings = new SettingsService(database, config);
   const siloMappings = new SiloFileMappingStore(database);
   const silo = new SiloService(settings, siloMappings);
@@ -214,6 +217,7 @@ export async function buildApp(config: AppConfig): Promise<BuiltApp> {
     fallbackAddon,
     playback,
     playbackOutcomes,
+    databaseBackups,
     config
   );
 
@@ -274,6 +278,7 @@ export async function buildApp(config: AppConfig): Promise<BuiltApp> {
     playbackActivity,
     deviceCapabilities,
     playbackOutcomes,
+    databaseBackups,
     systemDiagnostics
   );
   app.setNotFoundHandler(async (_request, reply) => reply.code(404).send({ error: 'Not found' }));
@@ -298,6 +303,7 @@ export async function buildApp(config: AppConfig): Promise<BuiltApp> {
     networkProfiles,
     playbackActivity,
     playbackOutcomes,
+    databaseBackups,
     systemDiagnostics
   };
 }

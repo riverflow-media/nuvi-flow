@@ -300,6 +300,23 @@ the declared SDR target.
   responsive counters, a progress indicator, start controls, and a CSRF-protected
   cancel action
 
+## Completed database backup and recovery foundation
+
+- Create consistent SQLite snapshots through the live backup API while normal
+  requests remain available, then run `quick_check` before publishing each file
+- Run automatic backups every 24 hours by default, retain a bounded seven
+  Nuvi-Flow-managed recovery points, and make both controls configurable by
+  environment without touching unrelated files in the data volume
+- Add an authenticated **Backups** workspace with sanitized status, manual
+  creation, storage totals, next-due visibility, and downloads protected by the
+  existing admin session
+- Keep filesystem paths and the database filename out of every admin response;
+  expose only opaque backup IDs and fixed safe failure messages
+- Surface missing, overdue, running, and failed backup state in System Health
+  without changing the public Docker liveness contract
+- Keep restoration deliberately offline and document the WAL-safe recovery
+  sequence instead of attempting to replace an open database
+
 ## Optional future features
 
 - Optional per-user Silo statistics integration. Keep the default single-user

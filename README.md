@@ -378,6 +378,8 @@ The password-protected dashboard provides:
 - Manual metadata matching
 - Live scan phase, progress, counters, elapsed time, and durable terminal history
 - Changed-library scans and full rescans with safe cancellation
+- Verified live database backups with automatic retention, manual creation, and
+  authenticated downloads
 - Automatic request history
 - Failed-request retries
 - Radarr connection testing
@@ -397,8 +399,9 @@ The password-protected dashboard provides:
 - Custom addon icon
 - Secure addon URL display and one-click regeneration
 - Running version and Git commit identity in the lower-left server status card
-- On-demand System Health checks for SQLite integrity, configured media roots,
-  scanner state, Silo, the optional fallback addon, and playback admission state
+- On-demand System Health checks for SQLite integrity, backup recency,
+  configured media roots, scanner state, Silo, the optional fallback addon, and
+  playback admission state
 - A copyable diagnostic bundle containing only sanitized operational data and
   one-hour playback outcome aggregates
 - General, Requests, Playback, Fallback, and Security settings workspaces with
@@ -422,6 +425,12 @@ reconciliation so a partial scan cannot delete catalog entries. Graceful
 shutdown uses the same path and waits for scanner work to settle before SQLite
 closes. If a process exits unexpectedly, its unfinished history row is marked
 **interrupted** on the next start instead of remaining **running** forever.
+
+Backups uses SQLite's live backup API, runs an integrity check before making a
+snapshot available, and retains only the configured number of Nuvi-Flow-managed
+files. Automatic backups default to every 24 hours with seven recovery points;
+manual creation and authenticated download are available from **System →
+Backups**. Backup responses use opaque IDs and never expose server paths.
 
 Saved Radarr, Sonarr, and Silo API keys and the private fallback-addon manifest
 URL are never returned to the browser. The diagnostic bundle also excludes
@@ -459,6 +468,7 @@ Default endpoints:
 `/app/data` contains:
 
 - SQLite database
+- Verified live database backups in `/app/data/backups`
 - Verified pre-migration SQLite backups created before upgrading an existing
   database to a newer schema
 - A bounded, sanitized history of recent server-side playback observations
@@ -470,6 +480,22 @@ Do not delete this volume during normal upgrades if you want to preserve your co
 Schema upgrades are additive and transactional. Before applying a pending
 migration to an existing database, Nuvi-Flow creates and integrity-checks a
 `media.db.backup-before-migration-*` file in the same data directory.
+
+### Restore a database backup
+
+Restores are deliberately offline so a live WAL database cannot be replaced
+under active requests:
+
+1. Download the chosen recovery point from **System → Backups**.
+2. Stop the Nuvi-Flow container or desktop process.
+3. Preserve the current `media.db`, `media.db-wal`, and `media.db-shm` files.
+4. Replace `media.db` with the downloaded SQLite file, then remove the stale
+   `media.db-wal` and `media.db-shm` companions.
+5. Start Nuvi-Flow and run **System → System health** to verify database
+   integrity and integration readiness.
+
+The backup contains settings and may contain integration credentials. Store and
+transfer downloaded copies as securely as the persistent data volume itself.
 
 ### Media mounts
 
@@ -624,6 +650,9 @@ Common environment variables include:
 | `SCAN_CONCURRENCY` | Concurrent scan work |
 | `WATCH_MEDIA` | Watch media directories for changes |
 | `SCAN_ON_STARTUP` | Scan after startup |
+| `DATABASE_BACKUP_ENABLED` | Create scheduled live SQLite backups; default `true` |
+| `DATABASE_BACKUP_INTERVAL_HOURS` | Hours between automatic backups, 1–720; default `24` |
+| `DATABASE_BACKUP_RETENTION` | Managed recovery points retained, 1–30; default `7` |
 | `SILO_ENABLED` | Enable optional Silo playback |
 | `SILO_URL` | Internal Silo base URL, such as `http://silo:8080` |
 | `SILO_API_KEY` | Silo API key; never returned to the browser |
