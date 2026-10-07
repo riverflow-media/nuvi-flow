@@ -181,4 +181,58 @@ describe('system diagnostics', () => {
     expect(serialized).not.toContain('private-silo.internal');
     expect(serialized).not.toContain('private-silo-key');
   });
+
+  it('checks saved Jellyfin and Plex identities without exposing credentials or IDs', async () => {
+    built.settings.set('jellyfinEnabled', 'true');
+    built.settings.set('jellyfinUrl', 'http://private-jellyfin.internal:8096');
+    built.settings.set('jellyfinApiKey', 'private-jellyfin-key');
+    built.settings.set('jellyfinUserId', 'user-1');
+    built.settings.set('plexEnabled', 'true');
+    built.settings.set('plexUrl', 'http://private-plex.internal:32400');
+    built.settings.set('plexToken', 'private-plex-token');
+    vi.spyOn(built.playbackServers, 'testJellyfin').mockResolvedValue({
+      server: {
+        id: 'private-jellyfin-server-id',
+        name: 'Jellyfin',
+        version: '10.11.6',
+        operatingSystem: 'Linux'
+      },
+      users: [{ id: 'user-1', name: 'Viewer', disabled: false }]
+    });
+    vi.spyOn(built.playbackServers, 'testPlex').mockResolvedValue({
+      server: {
+        id: 'private-plex-server-id',
+        name: 'Plex',
+        version: '1.42.2.10156'
+      },
+      libraries: [{ id: '1', name: 'Movies', type: 'movie' }]
+    });
+    built.systemDiagnostics.invalidate();
+
+    const snapshot = await built.systemDiagnostics.snapshot(true);
+    const serialized = JSON.stringify(snapshot);
+    expect(snapshot.checks).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: 'jellyfin',
+        status: 'healthy',
+        summary: expect.stringContaining('playback user Viewer')
+      }),
+      expect.objectContaining({
+        id: 'plex',
+        status: 'healthy',
+        summary: expect.stringContaining('1 accessible library')
+      })
+    ]));
+    for (const secret of [
+      'private-jellyfin.internal',
+      'private-jellyfin-key',
+      'private-jellyfin-server-id',
+      'user-1',
+      'private-plex.internal',
+      'private-plex-token',
+      'private-plex-server-id'
+    ]) {
+      expect(serialized).not.toContain(secret);
+    }
+  });
 });

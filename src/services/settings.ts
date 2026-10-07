@@ -212,6 +212,34 @@ export class SettingsService {
     )));
   }
 
+  get jellyfinEnabled(): boolean {
+    return this.boolean('jellyfinEnabled', this.defaults.jellyfinEnabled);
+  }
+
+  get jellyfinUrl(): string {
+    return this.get('jellyfinUrl', this.defaults.jellyfinUrl).replace(/\/+$/, '');
+  }
+
+  get jellyfinApiKey(): string {
+    return this.get('jellyfinApiKey', this.defaults.jellyfinApiKey);
+  }
+
+  get jellyfinUserId(): string {
+    return this.get('jellyfinUserId', this.defaults.jellyfinUserId);
+  }
+
+  get plexEnabled(): boolean {
+    return this.boolean('plexEnabled', this.defaults.plexEnabled);
+  }
+
+  get plexUrl(): string {
+    return this.get('plexUrl', this.defaults.plexUrl).replace(/\/+$/, '');
+  }
+
+  get plexToken(): string {
+    return this.get('plexToken', this.defaults.plexToken);
+  }
+
   get fallbackAddonEnabled(): boolean {
     return this.boolean(
       'fallbackAddonEnabled',
@@ -340,6 +368,13 @@ export class SettingsService {
       siloMaxConcurrentStarts: this.siloMaxConcurrentStarts,
       siloMaxQueuedStarts: this.siloMaxQueuedStarts,
       siloStartQueueTimeoutMs: this.siloStartQueueTimeoutMs,
+      jellyfinEnabled: this.jellyfinEnabled,
+      jellyfinUrl: this.jellyfinUrl,
+      jellyfinConfigured: Boolean(this.jellyfinApiKey),
+      jellyfinUserId: this.jellyfinUserId,
+      plexEnabled: this.plexEnabled,
+      plexUrl: this.plexUrl,
+      plexConfigured: Boolean(this.plexToken),
       showDirectPlay: this.showDirectPlay,
       fallbackAddonEnabled: this.fallbackAddonEnabled,
       fallbackAddonConfigured: Boolean(this.fallbackAddonManifestUrl),

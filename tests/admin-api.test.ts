@@ -477,6 +477,114 @@ describe('admin media detail API', () => {
     });
   });
 
+  it('tests Jellyfin and Plex through the playback-server boundary', async () => {
+    const jellyfin = vi.spyOn(built.playbackServers, 'testJellyfin')
+      .mockResolvedValue({
+        server: {
+          id: 'private-jellyfin-id',
+          name: 'Test Jellyfin',
+          version: '10.11.6',
+          operatingSystem: 'Linux'
+        },
+        users: [{ id: 'user-1', name: 'Viewer', disabled: false }]
+      });
+    const plex = vi.spyOn(built.playbackServers, 'testPlex')
+      .mockResolvedValue({
+        server: {
+          id: 'private-plex-id',
+          name: 'Test Plex',
+          version: '1.42.2.10156'
+        },
+        libraries: [{ id: '1', name: 'Movies', type: 'movie' }]
+      });
+
+    const jellyfinResponse = await request(
+      'POST',
+      '/admin/api/integrations/jellyfin/test',
+      {
+        url: 'http://jellyfin:8096/',
+        apiKey: 'private-jellyfin-key'
+      }
+    );
+    expect(jellyfinResponse.statusCode).toBe(200);
+    expect(jellyfin).toHaveBeenCalledWith(
+      'http://jellyfin:8096',
+      'private-jellyfin-key'
+    );
+    expect(jellyfinResponse.json()).toMatchObject({
+      ok: true,
+      service: 'jellyfin',
+      instanceName: 'Test Jellyfin',
+      users: [{ id: 'user-1', name: 'Viewer', disabled: false }],
+      playbackModes: [
+        'direct_play',
+        'remux',
+        'audio_transcode',
+        'video_transcode'
+      ]
+    });
+    expect(jellyfinResponse.body).not.toContain('private-jellyfin-key');
+
+    const plexResponse = await request(
+      'POST',
+      '/admin/api/integrations/plex/test',
+      {
+        url: 'http://plex:32400/',
+        token: 'private-plex-token'
+      }
+    );
+    expect(plexResponse.statusCode).toBe(200);
+    expect(plex).toHaveBeenCalledWith(
+      'http://plex:32400',
+      'private-plex-token'
+    );
+    expect(plexResponse.json()).toMatchObject({
+      ok: true,
+      service: 'plex',
+      instanceName: 'Test Plex',
+      libraries: [{ id: '1', name: 'Movies', type: 'movie' }],
+      playbackModes: [
+        'direct_play',
+        'direct_stream',
+        'software_transcode'
+      ],
+      requiresPlexPass: false
+    });
+    expect(plexResponse.body).not.toContain('private-plex-token');
+  });
+
+  it('persists playback-server credentials without returning their values', async () => {
+    const currentSettings = Object.fromEntries(
+      Object.entries(built.settings.publicView())
+        .map(([key, value]) => [key, String(value)])
+    );
+    const saved = await request('PUT', '/admin/api/settings', {
+      ...currentSettings,
+      jellyfinEnabled: 'true',
+      jellyfinUrl: 'http://jellyfin:8096/',
+      jellyfinApiKey: 'private-jellyfin-key',
+      jellyfinUserId: 'user_1234',
+      plexEnabled: 'true',
+      plexUrl: 'http://plex:32400/',
+      plexToken: 'private-plex-token'
+    });
+
+    expect(saved.statusCode).toBe(200);
+    expect(saved.json().settings).toMatchObject({
+      jellyfinEnabled: true,
+      jellyfinUrl: 'http://jellyfin:8096',
+      jellyfinConfigured: true,
+      jellyfinUserId: 'user_1234',
+      plexEnabled: true,
+      plexUrl: 'http://plex:32400',
+      plexConfigured: true
+    });
+    expect(saved.body).not.toContain('private-jellyfin-key');
+    expect(saved.body).not.toContain('private-plex-token');
+    expect(built.settings.jellyfinApiKey).toBe('private-jellyfin-key');
+    expect(built.settings.plexToken).toBe('private-plex-token');
+  });
+
   it('persists the separate Direct Play visibility setting', async () => {
     const currentSettings = Object.fromEntries(
       Object.entries(built.settings.publicView())

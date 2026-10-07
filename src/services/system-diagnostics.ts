@@ -9,6 +9,7 @@ import type { FallbackAddonService } from './playback/fallback-addon.js';
 import type { PlaybackOutcomeStore } from './playback/playback-outcomes.js';
 import type { PlaybackService } from './playback/playback-service.js';
 import type { DatabaseBackupService } from './database-backups.js';
+import type { PlaybackServersService } from './playback-servers.js';
 
 export type SystemDiagnosticStatus =
   | 'healthy'
@@ -101,6 +102,7 @@ export class SystemDiagnosticsService {
     private readonly playback: PlaybackService,
     private readonly playbackOutcomes: PlaybackOutcomeStore,
     private readonly databaseBackups: DatabaseBackupService,
+    private readonly playbackServers: PlaybackServersService,
     private readonly config: AppConfig,
     options: SystemDiagnosticsOptions = {}
   ) {
@@ -145,6 +147,8 @@ export class SystemDiagnosticsService {
       this.scannerCheck(),
       this.securityCheck(),
       this.siloCheck(),
+      this.jellyfinCheck(),
+      this.plexCheck(),
       this.fallbackCheck(),
       Promise.resolve(this.playbackOperationsCheck()),
       Promise.resolve(this.outcomeCheck(recentOutcomes))
@@ -448,6 +452,103 @@ export class SystemDiagnosticsService {
         label: 'Silo playback',
         status: 'error',
         summary: 'Silo could not be reached with the saved configuration.',
+        latencyMs: this.elapsed(startedAt)
+      };
+    }
+  }
+
+  private async jellyfinCheck(): Promise<SystemDiagnosticCheck> {
+    if (!this.settings.jellyfinEnabled) {
+      return {
+        id: 'jellyfin',
+        label: 'Jellyfin playback server',
+        status: 'disabled',
+        summary: 'Jellyfin integration is disabled.',
+        latencyMs: null
+      };
+    }
+    if (!this.settings.jellyfinUrl || !this.settings.jellyfinApiKey ||
+      !this.settings.jellyfinUserId) {
+      return {
+        id: 'jellyfin',
+        label: 'Jellyfin playback server',
+        status: 'error',
+        summary: 'Jellyfin is enabled but its connection or playback user is incomplete.',
+        latencyMs: null
+      };
+    }
+
+    const startedAt = this.now();
+    try {
+      const { server, users } = await this.playbackServers.testJellyfin();
+      const selected = users.find(user =>
+        user.id === this.settings.jellyfinUserId && !user.disabled
+      );
+      if (!selected) {
+        return {
+          id: 'jellyfin',
+          label: 'Jellyfin playback server',
+          status: 'error',
+          summary: 'Jellyfin is reachable, but the selected playback user is unavailable.',
+          latencyMs: this.elapsed(startedAt)
+        };
+      }
+      return {
+        id: 'jellyfin',
+        label: 'Jellyfin playback server',
+        status: 'healthy',
+        summary: `${bounded(server.name, 'Jellyfin')} ${bounded(server.version, 'unknown')} is authenticated; playback user ${bounded(selected.name, 'selected')} is available.`,
+        latencyMs: this.elapsed(startedAt)
+      };
+    } catch {
+      return {
+        id: 'jellyfin',
+        label: 'Jellyfin playback server',
+        status: 'error',
+        summary: 'Jellyfin could not be reached with the saved configuration.',
+        latencyMs: this.elapsed(startedAt)
+      };
+    }
+  }
+
+  private async plexCheck(): Promise<SystemDiagnosticCheck> {
+    if (!this.settings.plexEnabled) {
+      return {
+        id: 'plex',
+        label: 'Plex playback server',
+        status: 'disabled',
+        summary: 'Plex integration is disabled.',
+        latencyMs: null
+      };
+    }
+    if (!this.settings.plexUrl || !this.settings.plexToken) {
+      return {
+        id: 'plex',
+        label: 'Plex playback server',
+        status: 'error',
+        summary: 'Plex is enabled but its connection is incomplete.',
+        latencyMs: null
+      };
+    }
+
+    const startedAt = this.now();
+    try {
+      const { server, libraries } = await this.playbackServers.testPlex();
+      return {
+        id: 'plex',
+        label: 'Plex playback server',
+        status: libraries.length ? 'healthy' : 'warning',
+        summary: libraries.length
+          ? `${bounded(server.name, 'Plex')} ${bounded(server.version, 'unknown')} is authenticated; ${libraries.length} accessible ${libraries.length === 1 ? 'library' : 'libraries'} found.`
+          : 'Plex is authenticated, but no accessible libraries were returned.',
+        latencyMs: this.elapsed(startedAt)
+      };
+    } catch {
+      return {
+        id: 'plex',
+        label: 'Plex playback server',
+        status: 'error',
+        summary: 'Plex could not be reached with the saved configuration.',
         latencyMs: this.elapsed(startedAt)
       };
     }

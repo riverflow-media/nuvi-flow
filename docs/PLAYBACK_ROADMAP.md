@@ -317,6 +317,79 @@ the declared SDR target.
 - Keep restoration deliberately offline and document the WAL-safe recovery
   sequence instead of attempting to replace an open database
 
+## Playback-server expansion
+
+The existing Silo path remains the production playback implementation while
+Jellyfin and Plex are added behind the same application-owned boundary. Every
+provider must preserve the universal Auto order: byte-for-byte direct play,
+container-only remux, audio-only conversion, and video conversion last. Nuvi-Flow
+will orchestrate and proxy; it will not duplicate a provider's FFmpeg pipeline.
+
+### Completed provider control-plane foundation
+
+- Add server-side-only Jellyfin API-key and Plex token settings, disabled by
+  default and never returned to the browser or diagnostic bundle
+- Add authenticated connection tests for Jellyfin server identity and playback
+  users, plus Plex server identity and accessible libraries
+- Add a dedicated **Settings → Servers** workspace with saved-secret state,
+  Jellyfin playback-user selection, and an explicit Plex no-Plex-Pass baseline
+- Add cached, on-demand System Health checks for both providers without changing
+  the public Docker liveness contract
+- Keep Plex compatibility limited to Direct Play, Direct Stream/remux, and free
+  software transcoding. Hardware transcoding and premium tone mapping must never
+  be required or advertised as available without evidence
+
+### Next: provider-scoped exact media mapping
+
+- Resolve each Nuvi-Flow media file to an exact Jellyfin item/media-source ID and
+  Plex rating-key/part pair; title-only or first-result matches are forbidden
+- Support explicit path-prefix translations for containers whose media mounts
+  differ, while defaulting to exact normalized paths
+- Persist mappings by provider server identity, invalidate them when a scan sees
+  the local file change, periodically revalidate them, and use the verified
+  pre-migration backup path for any additive SQLite schema
+- Expose aggregate mapping readiness and safe failure reasons without returning
+  local paths, provider URLs, credentials, or internal item identifiers
+
+### Then: Jellyfin playback implementation
+
+- Translate the existing device capability snapshot into a bounded Jellyfin
+  device profile and request `PlaybackInfo` for the configured playback user
+- Accept only server-selected Direct Play, Remux, Direct Stream, or Transcode
+  decisions that remain inside the configured Jellyfin origin
+- Proxy direct/progressive/HLS responses behind expiring Nuvi-Flow signatures,
+  keep the API key server-side, rewrite nested HLS resources, and preserve Range,
+  validator, and cancellation behavior already proven by the Silo proxy
+- Track and stop exact Jellyfin playback/transcode sessions through the unified
+  activity, expiry, fallback, and graceful-shutdown lifecycle
+
+### Then: Plex playback implementation
+
+- Use the authenticated PMS playback-decision endpoint with the same conservative
+  capability snapshot and direct-first policy
+- Accept Direct Play, Direct Stream/remux, and software-transcode results only;
+  the integration must operate on a free Plex Media Server account with no Plex
+  Pass dependency
+- Proxy every selected media or HLS resource behind signed Nuvi-Flow URLs, never
+  place `X-Plex-Token` in a client-visible URL, and restrict child resources to
+  the configured PMS origin and exact playback session
+- Add exact session cleanup, Activity visibility, outcome classifications, and
+  bounded admission without pretending Nuvi-Flow owns Plex-wide capacity
+
+### Finally: unified provider orchestration
+
+- Add an administrator-selected provider order and health-aware fallback across
+  Silo, Jellyfin, and Plex while retaining Nuvi-Flow direct playback as the
+  cheapest always-available route
+- Key reuse by provider, server identity, media mapping, capability revision,
+  quality policy, device, and episode context so sessions can never cross
+  incompatible backends
+- Apply existing single-flight starts, signed proxies, activity, cancellation,
+  outcome diagnostics, adaptive fallback limits, and shutdown cleanup to every
+  provider before any provider is eligible for automatic failover
+- Complete focused provider tests plus the full test/typecheck/build suite and
+  gated Docker health check at every phase before publishing its image
+
 ## Optional future features
 
 - Optional per-user Silo statistics integration. Keep the default single-user

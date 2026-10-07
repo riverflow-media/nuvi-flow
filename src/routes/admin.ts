@@ -39,6 +39,7 @@ import type {
 import type { PlaybackService } from '../services/playback/playback-service.js';
 import type { SystemDiagnosticsService } from '../services/system-diagnostics.js';
 import type { DatabaseBackupService } from '../services/database-backups.js';
+import type { PlaybackServersService } from '../services/playback-servers.js';
 
 const COOKIE_NAME = 'nuviflow_admin';
 
@@ -290,6 +291,7 @@ export function registerAdminRoutes(
   requester: RequestService,
   config: AppConfig,
   silo: SiloService,
+  playbackServers: PlaybackServersService,
   fallbackAddon: FallbackAddonService,
   playback: PlaybackService,
   playbackActivity: PlaybackActivityService,
@@ -722,21 +724,24 @@ export function registerAdminRoutes(
       }
     }
 
-    if (!['radarr', 'sonarr', 'silo'].includes(service)) {
+    if (!['radarr', 'sonarr', 'silo', 'jellyfin', 'plex'].includes(service)) {
       return reply.code(404).send({ error: 'Unknown integration' });
     }
 
     const body = request.body as {
       url?: string;
       apiKey?: string;
+      token?: string;
     };
 
-    const label =
-      service === 'radarr'
-        ? 'Radarr'
-        : service === 'sonarr'
-          ? 'Sonarr'
-          : 'Silo';
+    const labels: Record<string, string> = {
+      radarr: 'Radarr',
+      sonarr: 'Sonarr',
+      silo: 'Silo',
+      jellyfin: 'Jellyfin',
+      plex: 'Plex'
+    };
+    const label = labels[service]!;
 
     const url = (
       body.url?.trim() ||
@@ -744,16 +749,23 @@ export function registerAdminRoutes(
         ? settings.radarrUrl
         : service === 'sonarr'
           ? settings.sonarrUrl
-          : settings.siloUrl)
+          : service === 'silo'
+            ? settings.siloUrl
+            : service === 'jellyfin'
+              ? settings.jellyfinUrl
+              : settings.plexUrl)
     ).replace(/\/+$/, '');
 
-    const apiKey =
-      body.apiKey?.trim() ||
-      (service === 'radarr'
-        ? settings.radarrApiKey
-        : service === 'sonarr'
-          ? settings.sonarrApiKey
-          : settings.siloApiKey);
+    const credential = service === 'plex'
+      ? body.token?.trim() || settings.plexToken
+      : body.apiKey?.trim() ||
+        (service === 'radarr'
+          ? settings.radarrApiKey
+          : service === 'sonarr'
+            ? settings.sonarrApiKey
+            : service === 'silo'
+              ? settings.siloApiKey
+              : settings.jellyfinApiKey);
 
     if (!url) {
       return reply.code(400).send({
@@ -777,18 +789,66 @@ export function registerAdminRoutes(
       });
     }
 
-    if (!apiKey) {
+    if (!credential) {
       return reply.code(400).send({
-        error: `${label} API key is required`
+        error: service === 'plex'
+          ? 'Plex token is required'
+          : `${label} API key is required`
       });
     }
 
     try {
+      if (service === 'jellyfin') {
+        const { server, users } = await playbackServers.testJellyfin(
+          url,
+          credential
+        );
+        return reply.send({
+          ok: true,
+          service: 'jellyfin',
+          instanceName: server.name,
+          serverId: server.id,
+          version: server.version,
+          users: users.map(user => ({
+            id: user.id,
+            name: user.name,
+            disabled: user.disabled
+          })),
+          playbackModes: [
+            'direct_play',
+            'remux',
+            'audio_transcode',
+            'video_transcode'
+          ]
+        });
+      }
+
+      if (service === 'plex') {
+        const { server, libraries } = await playbackServers.testPlex(
+          url,
+          credential
+        );
+        return reply.send({
+          ok: true,
+          service: 'plex',
+          instanceName: server.name,
+          serverId: server.id,
+          version: server.version,
+          libraries,
+          playbackModes: [
+            'direct_play',
+            'direct_stream',
+            'software_transcode'
+          ],
+          requiresPlexPass: false
+        });
+      }
+
       if (service === 'silo') {
         const { health, profiles } =
           await silo.testConnection(
             url,
-            apiKey
+            credential
           );
 
         return reply.send({
@@ -813,7 +873,7 @@ export function registerAdminRoutes(
       }
 
       if (service === 'radarr') {
-        const client = new RadarrClient(url, apiKey);
+        const client = new RadarrClient(url, credential);
 
         const [status, rootFolders, qualityProfiles] =
           await Promise.all([
@@ -840,7 +900,7 @@ export function registerAdminRoutes(
         });
       }
 
-      const client = new SonarrClient(url, apiKey);
+      const client = new SonarrClient(url, credential);
 
       const [status, rootFolders, qualityProfiles] =
         await Promise.all([
@@ -1031,6 +1091,8 @@ export function registerAdminRoutes(
       'sonarrSeparateAnimeRoot',
       'sonarrMonitorWholeSeries',
       'siloEnabled',
+      'jellyfinEnabled',
+      'plexEnabled',
       'siloRuntimeFallbackEnabled',
       'showDirectPlay',
       'fallbackAddonEnabled',
@@ -1048,7 +1110,9 @@ export function registerAdminRoutes(
     for (const [key, label] of [
       ['radarrUrl', 'Radarr'],
       ['sonarrUrl', 'Sonarr'],
-      ['siloUrl', 'Silo']
+      ['siloUrl', 'Silo'],
+      ['jellyfinUrl', 'Jellyfin'],
+      ['plexUrl', 'Plex']
     ] as const) {
       if (typeof body[key] !== 'string') continue;
 
@@ -1156,6 +1220,14 @@ export function registerAdminRoutes(
       );
     }
 
+    if (typeof body.jellyfinUserId === 'string') {
+      const userId = body.jellyfinUserId.trim();
+      if (userId && (userId.length > 128 || !/^[a-z0-9_-]+$/i.test(userId))) {
+        return reply.code(400).send({ error: 'Jellyfin playback user is invalid' });
+      }
+      settings.set('jellyfinUserId', userId);
+    }
+
     if (
       typeof body.siloTranscodeQuality === 'string' &&
       body.siloTranscodeQuality.trim()
@@ -1222,6 +1294,14 @@ export function registerAdminRoutes(
 
     if (body.siloApiKey?.trim()) {
       settings.set('siloApiKey', body.siloApiKey);
+    }
+
+    if (body.jellyfinApiKey?.trim()) {
+      settings.set('jellyfinApiKey', body.jellyfinApiKey);
+    }
+
+    if (body.plexToken?.trim()) {
+      settings.set('plexToken', body.plexToken);
     }
 
     if (body.newPassword) {

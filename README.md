@@ -268,6 +268,27 @@ Silo requires exact sink layout evidence before it will honor bitstream output.
 
 For exact-path matching to work, the same media file must have the same container path in Nuvi-Flow and Silo. For example, mount the library as `/media/movies` in both containers rather than `/media/movies` in one and `/movies` in the other.
 
+### Jellyfin and Plex playback servers
+
+Nuvi-Flow is expanding the proven Silo orchestration model to optional Jellyfin
+and Plex Media Server backends. The first completed phase adds authenticated,
+server-side-only credentials, connection discovery, a Jellyfin playback-user
+selector, Plex library discovery, and on-demand System Health checks under
+**Settings → Servers**.
+
+Playback routing is intentionally staged. Provider-scoped exact media mapping
+comes next, followed by Jellyfin playback/proxying, Plex playback/proxying, and
+only then unified automatic provider selection. Each provider must keep the same
+direct-first order: Direct Play, remux/Direct Stream, audio-only conversion,
+then video transcoding. Nuvi-Flow will ask the selected server to make and run
+the media conversion decision rather than introducing another FFmpeg pipeline.
+
+Plex support is designed to require no Plex Pass. The compatibility baseline is
+Direct Play, Direct Stream/remux, and Plex's free software transcoding. Hardware
+transcoding and premium tone mapping are not required or assumed. See the
+[playback roadmap](docs/PLAYBACK_ROADMAP.md) for the acceptance criteria and
+implementation order.
+
 ### Automatic Radarr and Sonarr requests
 
 When enabled, opening missing media in Nuvio can automatically send a request directly to Radarr or Sonarr.
@@ -666,6 +687,13 @@ Common environment variables include:
 | `SILO_MAX_CONCURRENT_STARTS` | Maximum distinct Silo start negotiations running at once, 1–8; default `2` |
 | `SILO_MAX_QUEUED_STARTS` | Additional distinct Silo starts allowed to wait FIFO, 0–32; default `4` |
 | `SILO_START_QUEUE_TIMEOUT_MS` | Maximum queue wait before Auto fallback or a retryable response, 1,000–60,000 ms; default `15000` |
+| `JELLYFIN_ENABLED` | Enable the staged Jellyfin playback-server integration; default `false` |
+| `JELLYFIN_URL` | Internal Jellyfin base URL, such as `http://jellyfin:8096` |
+| `JELLYFIN_API_KEY` | Jellyfin API key; kept server-side and never returned to the browser |
+| `JELLYFIN_USER_ID` | Jellyfin user whose permissions and playback decisions will apply |
+| `PLEX_ENABLED` | Enable the staged Plex Media Server integration; default `false` |
+| `PLEX_URL` | Internal Plex base URL, such as `http://plex:32400` |
+| `PLEX_TOKEN` | Plex authentication token; kept server-side and never returned to the browser |
 | `SHOW_DIRECT_PLAY` | Show a separate original-file Direct entry when Silo is available; default `true` |
 | `FALLBACK_ADDON_ENABLED` | Enable the optional pre-transcode fallback addon; default `false` |
 | `FALLBACK_ADDON_MANIFEST_URL` | Private installed manifest URL for AIOStreams or another Stremio-compatible stream addon; never returned to the browser |

@@ -28,6 +28,7 @@ import { PlaybackOutcomeStore } from './services/playback/playback-outcomes.js';
 import { RequestService } from './services/requester.js';
 import { SiloService } from './services/silo-service.js';
 import { SiloFileMappingStore } from './services/silo-file-mappings.js';
+import { PlaybackServersService } from './services/playback-servers.js';
 import { SettingsService } from './services/settings.js';
 import { SystemDiagnosticsService } from './services/system-diagnostics.js';
 import { DatabaseBackupService } from './services/database-backups.js';
@@ -41,6 +42,7 @@ export interface BuiltApp {
   tmdb: TmdbService;
   requester: RequestService;
   silo: SiloService;
+  playbackServers: PlaybackServersService;
   playbackSessions: PlaybackSessionRegistry;
   deviceCapabilities: DeviceCapabilityStore;
   playback: PlaybackService;
@@ -88,6 +90,7 @@ export async function buildApp(config: AppConfig): Promise<BuiltApp> {
   const settings = new SettingsService(database, config);
   const siloMappings = new SiloFileMappingStore(database);
   const silo = new SiloService(settings, siloMappings);
+  const playbackServers = new PlaybackServersService(settings);
   const playbackSessions =
     new PlaybackSessionRegistry();
   const deviceCapabilities = new DeviceCapabilityStore(database);
@@ -218,6 +221,7 @@ export async function buildApp(config: AppConfig): Promise<BuiltApp> {
     playback,
     playbackOutcomes,
     databaseBackups,
+    playbackServers,
     config
   );
 
@@ -273,6 +277,7 @@ export async function buildApp(config: AppConfig): Promise<BuiltApp> {
     requester,
     config,
     silo,
+    playbackServers,
     fallbackAddon,
     playback,
     playbackActivity,
@@ -296,6 +301,7 @@ export async function buildApp(config: AppConfig): Promise<BuiltApp> {
     tmdb,
     requester,
     silo,
+    playbackServers,
     playbackSessions,
     deviceCapabilities,
     playback,

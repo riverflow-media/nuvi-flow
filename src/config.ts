@@ -51,6 +51,13 @@ export interface AppConfig {
   siloMaxConcurrentStarts: number;
   siloMaxQueuedStarts: number;
   siloStartQueueTimeoutMs: number;
+  jellyfinEnabled: boolean;
+  jellyfinUrl: string;
+  jellyfinApiKey: string;
+  jellyfinUserId: string;
+  plexEnabled: boolean;
+  plexUrl: string;
+  plexToken: string;
   showDirectPlay: boolean;
   fallbackAddonEnabled: boolean;
   fallbackAddonManifestUrl: string;
@@ -173,6 +180,17 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
       15_000,
       1000
     )),
+    jellyfinEnabled: booleanValue(env.JELLYFIN_ENABLED, false),
+    jellyfinUrl: cleanBaseUrl(
+      env.JELLYFIN_URL || 'http://jellyfin:8096'
+    ),
+    jellyfinApiKey: env.JELLYFIN_API_KEY?.trim() || '',
+    jellyfinUserId: env.JELLYFIN_USER_ID?.trim() || '',
+    plexEnabled: booleanValue(env.PLEX_ENABLED, false),
+    plexUrl: cleanBaseUrl(
+      env.PLEX_URL || 'http://plex:32400'
+    ),
+    plexToken: env.PLEX_TOKEN?.trim() || '',
     showDirectPlay: booleanValue(env.SHOW_DIRECT_PLAY, true),
     fallbackAddonEnabled: booleanValue(env.FALLBACK_ADDON_ENABLED, false),
     fallbackAddonManifestUrl: env.FALLBACK_ADDON_MANIFEST_URL?.trim() || '',

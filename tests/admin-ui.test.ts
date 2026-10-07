@@ -35,7 +35,10 @@ function appState(files = [mediaFile()]) {
       baseUrl: 'http://localhost:60500', moviesPath: '/media/movies', tvPath: '/media/tv',
       addonAccessPath: '/addon/test-secure-install-token',
       scanIntervalMinutes: 30, minimumFileSizeMb: 50, streamTokenExpiryHours: 168,
-      longLivedStreamTokens: false, adminUsername: 'admin', tmdbConfigured: true
+      longLivedStreamTokens: false, adminUsername: 'admin', tmdbConfigured: true,
+      jellyfinEnabled: false, jellyfinUrl: 'http://jellyfin:8096',
+      jellyfinConfigured: false, jellyfinUserId: '',
+      plexEnabled: false, plexUrl: 'http://plex:32400', plexConfigured: false
     },
     build: { version: '1.1.1', revision: 'abc123def456' }
   };
@@ -137,7 +140,7 @@ describe('media details modal', () => {
     document.querySelector<HTMLButtonElement>('[data-view="settings"]')!.click();
     const tabs = [...document.querySelectorAll<HTMLButtonElement>('[data-settings-tab]')];
     expect(tabs.map(tab => tab.textContent)).toEqual([
-      'General', 'Requests', 'Playback', 'Fallback', 'Security'
+      'General', 'Requests', 'Playback', 'Servers', 'Fallback', 'Security'
     ]);
     expect(document.querySelector<HTMLElement>('[data-settings-panel="general"]')?.hidden)
       .toBe(false);
@@ -599,6 +602,82 @@ describe('media details modal', () => {
     expect(html).toContain('Maximum candidates');
     expect(html).toContain('Network adaptation');
     expect(html).toContain('Network memory');
+  });
+
+  it('presents staged Jellyfin and no-Plex-Pass server controls', () => {
+    const html = adminHtml('test-csrf');
+    expect(html).toContain('data-settings-tab="servers"');
+    expect(html).toContain('Jellyfin · Playback server');
+    expect(html).toContain('name="jellyfinUserId"');
+    expect(html).toContain('data-test-integration="jellyfin"');
+    expect(html).toContain('Plex · Playback server');
+    expect(html).toContain('data-test-integration="plex"');
+    expect(html).toContain('without requiring Plex Pass');
+    expect(html).toContain('free software transcoding');
+  });
+
+  it('tests Jellyfin and Plex with the correct private credential fields', async () => {
+    const fetchMock = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      if (String(input) === '/admin/api/state') return json(appState());
+      if (String(input) === '/admin/api/integrations/jellyfin/test') {
+        return json({
+          ok: true,
+          service: 'jellyfin',
+          instanceName: 'Test Jellyfin',
+          version: '10.11.6',
+          users: [
+            { id: 'user-1', name: 'Viewer', disabled: false },
+            { id: 'user-2', name: 'Retired', disabled: true }
+          ]
+        });
+      }
+      if (String(input) === '/admin/api/integrations/plex/test') {
+        return json({
+          ok: true,
+          service: 'plex',
+          instanceName: 'Test Plex',
+          version: '1.42.2.10156',
+          libraries: [{ id: '1', name: 'Movies', type: 'movie' }],
+          requiresPlexPass: false
+        });
+      }
+      return json({ error: 'Unexpected request' }, 500);
+    });
+    install(fetchMock);
+    await flush();
+
+    const jellyfinKey = document.querySelector<HTMLInputElement>('#jellyfinApiKey')!;
+    jellyfinKey.value = 'private-jellyfin-key';
+    document.querySelector<HTMLButtonElement>('[data-test-integration="jellyfin"]')!.click();
+    await flush();
+    expect(document.querySelector('#jellyfinStatus')?.textContent)
+      .toContain('1 playback user found');
+    expect(document.querySelector<HTMLSelectElement>('#jellyfinUserId')?.options[1]?.textContent)
+      .toBe('Viewer');
+    expect(document.querySelector<HTMLSelectElement>('#jellyfinUserId')?.options[2]?.disabled)
+      .toBe(true);
+
+    const plexToken = document.querySelector<HTMLInputElement>('#plexToken')!;
+    plexToken.value = 'private-plex-token';
+    document.querySelector<HTMLButtonElement>('[data-test-integration="plex"]')!.click();
+    await flush();
+    expect(document.querySelector('#plexStatus')?.textContent)
+      .toContain('no Plex Pass required');
+
+    const jellyfinCall = fetchMock.mock.calls.find(call =>
+      String(call[0]) === '/admin/api/integrations/jellyfin/test'
+    );
+    const plexCall = fetchMock.mock.calls.find(call =>
+      String(call[0]) === '/admin/api/integrations/plex/test'
+    );
+    expect(JSON.parse(String(jellyfinCall?.[1]?.body))).toMatchObject({
+      url: 'http://jellyfin:8096',
+      apiKey: 'private-jellyfin-key'
+    });
+    expect(JSON.parse(String(plexCall?.[1]?.body))).toMatchObject({
+      url: 'http://plex:32400',
+      token: 'private-plex-token'
+    });
   });
 
   it('regenerates the secure manifest URL with an explicit warning', async () => {
