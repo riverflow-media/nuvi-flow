@@ -37,8 +37,9 @@ function appState(files = [mediaFile()]) {
       scanIntervalMinutes: 30, minimumFileSizeMb: 50, streamTokenExpiryHours: 168,
       longLivedStreamTokens: false, adminUsername: 'admin', tmdbConfigured: true,
       jellyfinEnabled: false, jellyfinUrl: 'http://jellyfin:8096',
-      jellyfinConfigured: false, jellyfinUserId: '',
-      plexEnabled: false, plexUrl: 'http://plex:32400', plexConfigured: false
+      jellyfinConfigured: false, jellyfinUserId: '', jellyfinPathMappings: '',
+      plexEnabled: false, plexUrl: 'http://plex:32400', plexConfigured: false,
+      plexPathMappings: ''
     },
     build: { version: '1.1.1', revision: 'abc123def456' }
   };
@@ -609,11 +610,54 @@ describe('media details modal', () => {
     expect(html).toContain('data-settings-tab="servers"');
     expect(html).toContain('Jellyfin · Playback server');
     expect(html).toContain('name="jellyfinUserId"');
+    expect(html).toContain('name="jellyfinPathMappings"');
     expect(html).toContain('data-test-integration="jellyfin"');
+    expect(html).toContain('data-refresh-mappings="jellyfin"');
     expect(html).toContain('Plex · Playback server');
+    expect(html).toContain('name="plexPathMappings"');
     expect(html).toContain('data-test-integration="plex"');
+    expect(html).toContain('data-refresh-mappings="plex"');
     expect(html).toContain('without requiring Plex Pass');
     expect(html).toContain('free software transcoding');
+    expect(html).toContain('longest matching prefix wins');
+  });
+
+  it('refreshes provider mappings and renders aggregate-only readiness', async () => {
+    const fetchMock = vi.fn(async (input: string | URL | Request) => {
+      if (String(input) === '/admin/api/state') return json(appState());
+      if (String(input) === '/admin/api/integrations/jellyfin/mappings/refresh') {
+        return json({
+          ok: true,
+          service: 'jellyfin',
+          mapping: {
+            total: 4,
+            mapped: 2,
+            pending: 1,
+            stale: 0,
+            notFound: 1,
+            ambiguous: 0,
+            errors: 0,
+            refreshDue: 0,
+            lastUpdatedAt: 1234
+          }
+        });
+      }
+      return json({ error: 'Unexpected request' }, 500);
+    });
+    install(fetchMock);
+    await flush();
+
+    document.querySelector<HTMLButtonElement>(
+      '[data-refresh-mappings="jellyfin"]'
+    )!.click();
+    await flush();
+
+    expect(document.querySelector('#jellyfinMappingStatus')?.textContent)
+      .toBe('2 of 4 exact media mappings ready · 1 pending · 1 not found.');
+    const refreshCall = fetchMock.mock.calls.find(call =>
+      String(call[0]) === '/admin/api/integrations/jellyfin/mappings/refresh'
+    );
+    expect(refreshCall?.[1]?.method).toBe('POST');
   });
 
   it('tests Jellyfin and Plex with the correct private credential fields', async () => {

@@ -228,6 +228,13 @@ export class SettingsService {
     return this.get('jellyfinUserId', this.defaults.jellyfinUserId);
   }
 
+  get jellyfinPathMappings(): string {
+    return this.get(
+      'jellyfinPathMappings',
+      this.defaults.jellyfinPathMappings
+    );
+  }
+
   get plexEnabled(): boolean {
     return this.boolean('plexEnabled', this.defaults.plexEnabled);
   }
@@ -238,6 +245,10 @@ export class SettingsService {
 
   get plexToken(): string {
     return this.get('plexToken', this.defaults.plexToken);
+  }
+
+  get plexPathMappings(): string {
+    return this.get('plexPathMappings', this.defaults.plexPathMappings);
   }
 
   get fallbackAddonEnabled(): boolean {
@@ -372,9 +383,11 @@ export class SettingsService {
       jellyfinUrl: this.jellyfinUrl,
       jellyfinConfigured: Boolean(this.jellyfinApiKey),
       jellyfinUserId: this.jellyfinUserId,
+      jellyfinPathMappings: this.jellyfinPathMappings,
       plexEnabled: this.plexEnabled,
       plexUrl: this.plexUrl,
       plexConfigured: Boolean(this.plexToken),
+      plexPathMappings: this.plexPathMappings,
       showDirectPlay: this.showDirectPlay,
       fallbackAddonEnabled: this.fallbackAddonEnabled,
       fallbackAddonConfigured: Boolean(this.fallbackAddonManifestUrl),

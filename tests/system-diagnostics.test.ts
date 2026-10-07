@@ -4,6 +4,7 @@ import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { loadConfig } from '../src/config.js';
 import { buildApp, type BuiltApp } from '../src/server.js';
+import { playbackServerKey } from '../src/services/playback-server-mappings.js';
 
 describe('system diagnostics', () => {
   let built: BuiltApp;
@@ -233,6 +234,68 @@ describe('system diagnostics', () => {
       'private-plex-server-id'
     ]) {
       expect(serialized).not.toContain(secret);
+    }
+  });
+
+  it('reports exact mapping readiness without exposing paths or provider item IDs', async () => {
+    const now = Date.now();
+    const privatePath = path.join(directory, 'private', 'Example.mkv');
+    built.database.sqlite.prepare(
+      `INSERT INTO media_items (id,type,stremio_id,title,created_at,updated_at)
+       VALUES ('item-map','movie','tt7654321','Mapped Movie',?,?)`
+    ).run(now, now);
+    built.database.sqlite.prepare(
+      `INSERT INTO media_files (
+        id,library_type,absolute_path,relative_path,size,mtime_ms,media_item_id,
+        status,added_at,updated_at,last_seen_at
+      ) VALUES ('file-map','movie',?,'Example.mkv',100,1,'item-map',
+        'matched',?,?,?)`
+    ).run(privatePath, now, now, now);
+    const serverId = 'private-jellyfin-server-id';
+    built.playbackServerMappings.recordBatch(
+      'jellyfin',
+      playbackServerKey('jellyfin', serverId),
+      [{
+        mediaFileId: 'file-map',
+        mappedPath: privatePath,
+        status: 'mapped',
+        reason: null,
+        providerItemId: 'private-jellyfin-item-id',
+        providerMediaId: 'private-jellyfin-source-id',
+        providerStreamPath: null
+      }],
+      now
+    );
+    built.settings.set('jellyfinEnabled', 'true');
+    built.settings.set('jellyfinUrl', 'http://private-jellyfin.internal:8096');
+    built.settings.set('jellyfinApiKey', 'private-jellyfin-key');
+    built.settings.set('jellyfinUserId', 'user-1');
+    vi.spyOn(built.playbackServers, 'testJellyfin').mockResolvedValue({
+      server: {
+        id: serverId,
+        name: 'Jellyfin',
+        version: '10.11.6',
+        operatingSystem: 'Linux'
+      },
+      users: [{ id: 'user-1', name: 'Viewer', disabled: false }]
+    });
+
+    const snapshot = await built.systemDiagnostics.snapshot(true);
+    const jellyfin = snapshot.checks.find(check => check.id === 'jellyfin');
+    const serialized = JSON.stringify(snapshot);
+    expect(jellyfin).toMatchObject({
+      status: 'healthy',
+      summary: expect.stringContaining(
+        'Exact mapping is ready for 1 of 1 local files.'
+      )
+    });
+    for (const value of [
+      privatePath,
+      serverId,
+      'private-jellyfin-item-id',
+      'private-jellyfin-source-id'
+    ]) {
+      expect(serialized).not.toContain(value);
     }
   });
 });

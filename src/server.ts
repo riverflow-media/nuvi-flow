@@ -29,6 +29,7 @@ import { RequestService } from './services/requester.js';
 import { SiloService } from './services/silo-service.js';
 import { SiloFileMappingStore } from './services/silo-file-mappings.js';
 import { PlaybackServersService } from './services/playback-servers.js';
+import { PlaybackServerMappingStore } from './services/playback-server-mappings.js';
 import { SettingsService } from './services/settings.js';
 import { SystemDiagnosticsService } from './services/system-diagnostics.js';
 import { DatabaseBackupService } from './services/database-backups.js';
@@ -43,6 +44,7 @@ export interface BuiltApp {
   requester: RequestService;
   silo: SiloService;
   playbackServers: PlaybackServersService;
+  playbackServerMappings: PlaybackServerMappingStore;
   playbackSessions: PlaybackSessionRegistry;
   deviceCapabilities: DeviceCapabilityStore;
   playback: PlaybackService;
@@ -89,8 +91,12 @@ export async function buildApp(config: AppConfig): Promise<BuiltApp> {
   const databaseBackups = new DatabaseBackupService(database, config, app.log);
   const settings = new SettingsService(database, config);
   const siloMappings = new SiloFileMappingStore(database);
+  const playbackServerMappings = new PlaybackServerMappingStore(database);
   const silo = new SiloService(settings, siloMappings);
-  const playbackServers = new PlaybackServersService(settings);
+  const playbackServers = new PlaybackServersService(
+    settings,
+    playbackServerMappings
+  );
   const playbackSessions =
     new PlaybackSessionRegistry();
   const deviceCapabilities = new DeviceCapabilityStore(database);
@@ -206,7 +212,8 @@ export async function buildApp(config: AppConfig): Promise<BuiltApp> {
     requester,
     config,
     app.log,
-    siloMappings
+    siloMappings,
+    playbackServers
   );
 
   requester.setLibraryRescanHandler(
@@ -302,6 +309,7 @@ export async function buildApp(config: AppConfig): Promise<BuiltApp> {
     requester,
     silo,
     playbackServers,
+    playbackServerMappings,
     playbackSessions,
     deviceCapabilities,
     playback,

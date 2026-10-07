@@ -339,19 +339,25 @@ will orchestrate and proxy; it will not duplicate a provider's FFmpeg pipeline.
   software transcoding. Hardware transcoding and premium tone mapping must never
   be required or advertised as available without evidence
 
-### Next: provider-scoped exact media mapping
+### Completed provider-scoped exact media mapping
 
-- Resolve each Nuvi-Flow media file to an exact Jellyfin item/media-source ID and
-  Plex rating-key/part pair; title-only or first-result matches are forbidden
-- Support explicit path-prefix translations for containers whose media mounts
-  differ, while defaulting to exact normalized paths
-- Persist mappings by provider server identity, invalidate them when a scan sees
-  the local file change, periodically revalidate them, and use the verified
-  pre-migration backup path for any additive SQLite schema
-- Expose aggregate mapping readiness and safe failure reasons without returning
-  local paths, provider URLs, credentials, or internal item identifiers
+- Paginate authenticated Jellyfin Movie/Episode inventories and Plex movie/TV
+  leaves, resolving each Nuvi-Flow file to an exact Jellyfin item/media-source
+  pair or Plex rating-key/part pair
+- Reject title-only, first-result, and ambiguous duplicate-path matches; preserve
+  the Plex origin-relative part key only after the exact file path is unique
+- Support validated, longest-prefix `local => provider` translations for
+  containers whose media mounts differ, while defaulting to exact normalized
+  paths
+- Persist mappings by hashed provider/server identity with a 24-hour positive
+  refresh policy, short negative retry, scan-time stale marking, deletion
+  cascade, and the verified pre-migration SQLite backup path
+- Add authenticated manual refresh controls and aggregate System Health status
+  using only ready/pending/stale/not-found/ambiguous/error counts; local paths,
+  provider URLs, credentials, and internal item identifiers stay out of mapping
+  status and diagnostic responses
 
-### Then: Jellyfin playback implementation
+### Next: Jellyfin playback implementation
 
 - Translate the existing device capability snapshot into a bounded Jellyfin
   device profile and request `PlaybackInfo` for the configured playback user

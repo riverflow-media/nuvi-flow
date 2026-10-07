@@ -40,6 +40,10 @@ import type { PlaybackService } from '../services/playback/playback-service.js';
 import type { SystemDiagnosticsService } from '../services/system-diagnostics.js';
 import type { DatabaseBackupService } from '../services/database-backups.js';
 import type { PlaybackServersService } from '../services/playback-servers.js';
+import {
+  parsePathPrefixMappings,
+  PathPrefixMappingError
+} from '../services/playback-server-mappings.js';
 
 const COOKIE_NAME = 'nuviflow_admin';
 
@@ -814,6 +818,7 @@ export function registerAdminRoutes(
             name: user.name,
             disabled: user.disabled
           })),
+          mapping: playbackServers.mappingSummary('jellyfin', server.id),
           playbackModes: [
             'direct_play',
             'remux',
@@ -835,6 +840,7 @@ export function registerAdminRoutes(
           serverId: server.id,
           version: server.version,
           libraries,
+          mapping: playbackServers.mappingSummary('plex', server.id),
           playbackModes: [
             'direct_play',
             'direct_stream',
@@ -942,6 +948,50 @@ export function registerAdminRoutes(
       return reply.code(502).send({
         error: `${label} connection failed: ${detail}`
       });
+    }
+  });
+
+  app.post('/admin/api/integrations/:service/mappings/refresh', {
+    preHandler: requireAdmin(config, true)
+  }, async (request, reply) => {
+    const { service } = request.params as { service: string };
+    if (service !== 'jellyfin' && service !== 'plex') {
+      return reply.code(404).send({ error: 'Unknown playback server' });
+    }
+    const configured = service === 'jellyfin'
+      ? settings.jellyfinEnabled && Boolean(
+        settings.jellyfinUrl && settings.jellyfinApiKey &&
+        settings.jellyfinUserId
+      )
+      : settings.plexEnabled && Boolean(
+        settings.plexUrl && settings.plexToken
+      );
+    const label = service === 'jellyfin' ? 'Jellyfin' : 'Plex';
+    if (!configured) {
+      return reply.code(400).send({
+        error: `${label} must be enabled and fully configured before mapping.`
+      });
+    }
+
+    try {
+      const result = await playbackServers.refreshMappings(service, true);
+      systemDiagnostics.invalidate();
+      return reply.send({
+        ok: true,
+        service,
+        mapping: result.summary
+      });
+    } catch (error) {
+      request.log.warn(
+        { service, error: error instanceof Error ? error.message : 'unknown' },
+        'Playback-server mapping refresh failed'
+      );
+      return reply.code(error instanceof PathPrefixMappingError ? 400 : 502)
+        .send({
+          error: error instanceof PathPrefixMappingError
+            ? error.message
+            : `${label} exact media mapping refresh failed.`
+        });
     }
   });
 
@@ -1137,6 +1187,23 @@ export function registerAdminRoutes(
       }
 
       settings.set(key, value);
+    }
+
+    for (const [key, label] of [
+      ['jellyfinPathMappings', 'Jellyfin'],
+      ['plexPathMappings', 'Plex']
+    ] as const) {
+      if (typeof body[key] !== 'string') continue;
+      try {
+        parsePathPrefixMappings(body[key]!);
+      } catch (error) {
+        return reply.code(400).send({
+          error: error instanceof PathPrefixMappingError
+            ? `${label} ${error.message}`
+            : `${label} path-prefix mappings are invalid.`
+        });
+      }
+      settings.set(key, body[key]!);
     }
 
     if (typeof body.fallbackAddonManifestUrl === 'string' && body.fallbackAddonManifestUrl.trim()) {

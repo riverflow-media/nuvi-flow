@@ -10,6 +10,7 @@ import type { PlaybackOutcomeStore } from './playback/playback-outcomes.js';
 import type { PlaybackService } from './playback/playback-service.js';
 import type { DatabaseBackupService } from './database-backups.js';
 import type { PlaybackServersService } from './playback-servers.js';
+import type { PlaybackServerMappingSummary } from './playback-server-mappings.js';
 
 export type SystemDiagnosticStatus =
   | 'healthy'
@@ -75,6 +76,26 @@ function bounded(value: unknown, fallback: string): string {
   return typeof value === 'string' && value.trim()
     ? value.trim().slice(0, 120)
     : fallback;
+}
+
+function mappingSummaryText(summary: PlaybackServerMappingSummary): string {
+  if (summary.total === 0) {
+    return 'No eligible local files are awaiting exact mapping.';
+  }
+  const attention = summary.total - summary.mapped;
+  const reasons = [
+    summary.pending ? `${summary.pending} pending` : '',
+    summary.stale ? `${summary.stale} stale` : '',
+    summary.notFound ? `${summary.notFound} not found` : '',
+    summary.ambiguous ? `${summary.ambiguous} ambiguous` : '',
+    summary.errors ? `${summary.errors} invalid` : ''
+  ].filter(Boolean);
+  const suffix = attention > 0
+    ? `; ${reasons.join(', ') || `${attention} unavailable`}`
+    : summary.refreshDue > 0
+      ? `; ${summary.refreshDue} due for revalidation`
+      : '';
+  return `Exact mapping is ready for ${summary.mapped} of ${summary.total} local files${suffix}.`;
 }
 
 /**
@@ -493,11 +514,17 @@ export class SystemDiagnosticsService {
           latencyMs: this.elapsed(startedAt)
         };
       }
+      const mapping = this.playbackServers.mappingSummary(
+        'jellyfin',
+        server.id
+      );
+      const mappingReady = mapping.mapped === mapping.total &&
+        mapping.refreshDue === 0;
       return {
         id: 'jellyfin',
         label: 'Jellyfin playback server',
-        status: 'healthy',
-        summary: `${bounded(server.name, 'Jellyfin')} ${bounded(server.version, 'unknown')} is authenticated; playback user ${bounded(selected.name, 'selected')} is available.`,
+        status: mappingReady ? 'healthy' : 'warning',
+        summary: `${bounded(server.name, 'Jellyfin')} ${bounded(server.version, 'unknown')} is authenticated; playback user ${bounded(selected.name, 'selected')} is available. ${mappingSummaryText(mapping)}`,
         latencyMs: this.elapsed(startedAt)
       };
     } catch {
@@ -534,12 +561,15 @@ export class SystemDiagnosticsService {
     const startedAt = this.now();
     try {
       const { server, libraries } = await this.playbackServers.testPlex();
+      const mapping = this.playbackServers.mappingSummary('plex', server.id);
+      const mappingReady = mapping.mapped === mapping.total &&
+        mapping.refreshDue === 0;
       return {
         id: 'plex',
         label: 'Plex playback server',
-        status: libraries.length ? 'healthy' : 'warning',
+        status: libraries.length && mappingReady ? 'healthy' : 'warning',
         summary: libraries.length
-          ? `${bounded(server.name, 'Plex')} ${bounded(server.version, 'unknown')} is authenticated; ${libraries.length} accessible ${libraries.length === 1 ? 'library' : 'libraries'} found.`
+          ? `${bounded(server.name, 'Plex')} ${bounded(server.version, 'unknown')} is authenticated; ${libraries.length} accessible ${libraries.length === 1 ? 'library' : 'libraries'} found. ${mappingSummaryText(mapping)}`
           : 'Plex is authenticated, but no accessible libraries were returned.',
         latencyMs: this.elapsed(startedAt)
       };

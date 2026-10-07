@@ -564,9 +564,11 @@ describe('admin media detail API', () => {
       jellyfinUrl: 'http://jellyfin:8096/',
       jellyfinApiKey: 'private-jellyfin-key',
       jellyfinUserId: 'user_1234',
+      jellyfinPathMappings: `${directory} => /jellyfin/media`,
       plexEnabled: 'true',
       plexUrl: 'http://plex:32400/',
-      plexToken: 'private-plex-token'
+      plexToken: 'private-plex-token',
+      plexPathMappings: `${directory} => /plex/media`
     });
 
     expect(saved.statusCode).toBe(200);
@@ -575,14 +577,78 @@ describe('admin media detail API', () => {
       jellyfinUrl: 'http://jellyfin:8096',
       jellyfinConfigured: true,
       jellyfinUserId: 'user_1234',
+      jellyfinPathMappings: `${directory} => /jellyfin/media`,
       plexEnabled: true,
       plexUrl: 'http://plex:32400',
-      plexConfigured: true
+      plexConfigured: true,
+      plexPathMappings: `${directory} => /plex/media`
     });
     expect(saved.body).not.toContain('private-jellyfin-key');
     expect(saved.body).not.toContain('private-plex-token');
     expect(built.settings.jellyfinApiKey).toBe('private-jellyfin-key');
     expect(built.settings.plexToken).toBe('private-plex-token');
+  });
+
+  it('refreshes exact provider mappings without returning provider IDs or paths', async () => {
+    built.settings.set('jellyfinEnabled', 'true');
+    built.settings.set('jellyfinUrl', 'http://jellyfin:8096');
+    built.settings.set('jellyfinApiKey', 'private-jellyfin-key');
+    built.settings.set('jellyfinUserId', 'user-1');
+    const refresh = vi.spyOn(built.playbackServers, 'refreshMappings')
+      .mockResolvedValue({
+        provider: 'jellyfin',
+        serverKey: 'private-server-scope',
+        summary: {
+          total: 3,
+          mapped: 2,
+          pending: 0,
+          stale: 0,
+          notFound: 1,
+          ambiguous: 0,
+          errors: 0,
+          refreshDue: 0,
+          lastUpdatedAt: 1234
+        }
+      });
+
+    const response = await request(
+      'POST',
+      '/admin/api/integrations/jellyfin/mappings/refresh'
+    );
+    expect(response.statusCode).toBe(200);
+    expect(refresh).toHaveBeenCalledWith('jellyfin', true);
+    expect(response.json()).toEqual({
+      ok: true,
+      service: 'jellyfin',
+      mapping: {
+        total: 3,
+        mapped: 2,
+        pending: 0,
+        stale: 0,
+        notFound: 1,
+        ambiguous: 0,
+        errors: 0,
+        refreshDue: 0,
+        lastUpdatedAt: 1234
+      }
+    });
+    expect(response.body).not.toContain('private-server-scope');
+    expect(response.body).not.toContain('private-jellyfin-key');
+    expect(response.body).not.toContain(directory);
+  });
+
+  it('rejects malformed provider path-prefix mappings', async () => {
+    const currentSettings = Object.fromEntries(
+      Object.entries(built.settings.publicView())
+        .map(([key, value]) => [key, String(value)])
+    );
+    const response = await request('PUT', '/admin/api/settings', {
+      ...currentSettings,
+      jellyfinPathMappings: 'relative/path => /provider/path'
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json().error).toContain('absolute paths');
   });
 
   it('persists the separate Direct Play visibility setting', async () => {

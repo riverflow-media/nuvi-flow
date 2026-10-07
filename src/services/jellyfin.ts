@@ -23,6 +23,12 @@ export interface JellyfinUser {
   disabled: boolean;
 }
 
+export interface JellyfinMediaCandidate {
+  itemId: string;
+  mediaSourceId: string;
+  path: string;
+}
+
 interface JellyfinSystemInfoResponse {
   Id?: unknown;
   ServerName?: unknown;
@@ -36,11 +42,36 @@ interface JellyfinUserResponse {
   Policy?: { IsDisabled?: unknown } | null;
 }
 
+interface JellyfinMediaSourceResponse {
+  Id?: unknown;
+  Path?: unknown;
+}
+
+interface JellyfinItemResponse {
+  Id?: unknown;
+  Path?: unknown;
+  MediaSources?: unknown;
+}
+
+interface JellyfinItemsResponse {
+  Items?: unknown;
+  TotalRecordCount?: unknown;
+}
+
+const MEDIA_PAGE_SIZE = 200;
+const MAX_MEDIA_PAGES = 5_000;
+
 function requiredString(value: unknown, field: string): string {
   if (typeof value !== 'string' || !value.trim()) {
     throw new JellyfinApiError(`Jellyfin returned an invalid ${field}.`);
   }
   return value.trim();
+}
+
+function optionalString(value: unknown): string | null {
+  return typeof value === 'string' && value.trim()
+    ? value.trim()
+    : null;
 }
 
 /**
@@ -88,10 +119,73 @@ export class JellyfinClient {
     });
   }
 
-  private async get<T>(pathname: string): Promise<T> {
+  async mediaInventory(userId: string): Promise<JellyfinMediaCandidate[]> {
+    const candidates: JellyfinMediaCandidate[] = [];
+    const seen = new Set<string>();
+    let startIndex = 0;
+
+    for (let page = 0; page < MAX_MEDIA_PAGES; page += 1) {
+      const result = await this.get<JellyfinItemsResponse>('/Items', {
+        UserId: userId,
+        Recursive: true,
+        IncludeItemTypes: 'Movie,Episode',
+        Fields: 'Path,MediaSources',
+        EnableImages: false,
+        EnableUserData: false,
+        EnableTotalRecordCount: true,
+        StartIndex: startIndex,
+        Limit: MEDIA_PAGE_SIZE
+      });
+      if (!Array.isArray(result.Items)) {
+        throw new JellyfinApiError('Jellyfin returned an invalid media inventory.');
+      }
+
+      for (const value of result.Items) {
+        const item = value as JellyfinItemResponse;
+        const itemId = optionalString(item?.Id);
+        const itemPath = optionalString(item?.Path);
+        const sources = Array.isArray(item?.MediaSources)
+          ? item.MediaSources as JellyfinMediaSourceResponse[]
+          : [];
+        if (!itemId) continue;
+        for (const source of sources) {
+          const mediaSourceId = optionalString(source?.Id);
+          const sourcePath = optionalString(source?.Path) ??
+            (sources.length === 1 ? itemPath : null);
+          if (!mediaSourceId || !sourcePath) continue;
+          const key = `${itemId}\0${mediaSourceId}\0${sourcePath}`;
+          if (seen.has(key)) continue;
+          seen.add(key);
+          candidates.push({ itemId, mediaSourceId, path: sourcePath });
+        }
+      }
+
+      const count = result.Items.length;
+      startIndex += count;
+      const total = typeof result.TotalRecordCount === 'number' &&
+        Number.isFinite(result.TotalRecordCount)
+        ? Math.max(0, Math.floor(result.TotalRecordCount))
+        : null;
+      if (count === 0 || (total !== null && startIndex >= total) ||
+        (total === null && count < MEDIA_PAGE_SIZE)) {
+        return candidates;
+      }
+    }
+
+    throw new JellyfinApiError('Jellyfin media inventory exceeded the safe page limit.');
+  }
+
+  private async get<T>(
+    pathname: string,
+    query: Record<string, string | number | boolean> = {}
+  ): Promise<T> {
+    const url = new URL(`${this.baseUrl}${pathname}`);
+    for (const [key, value] of Object.entries(query)) {
+      url.searchParams.set(key, String(value));
+    }
     let response: Response;
     try {
-      response = await fetch(`${this.baseUrl}${pathname}`, {
+      response = await fetch(url, {
         headers: {
           Accept: 'application/json',
           'X-Emby-Token': this.apiKey,

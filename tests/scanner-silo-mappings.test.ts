@@ -6,6 +6,11 @@ import { loadConfig } from '../src/config.js';
 import { AppDatabase } from '../src/db/index.js';
 import { MediaScanner } from '../src/services/scanner.js';
 import { SiloFileMappingStore, siloServerKey } from '../src/services/silo-file-mappings.js';
+import {
+  playbackServerKey,
+  PlaybackServerMappingStore
+} from '../src/services/playback-server-mappings.js';
+import { PlaybackServersService } from '../src/services/playback-servers.js';
 import type { RequestService } from '../src/services/requester.js';
 import type { SettingsService } from '../src/services/settings.js';
 import type { TmdbService } from '../src/services/tmdb.js';
@@ -28,7 +33,7 @@ vi.mock('../src/services/ffprobe.js', () => ({
   }))
 }));
 
-describe('scanner Silo mapping refresh', () => {
+describe('scanner provider mapping refresh', () => {
   const directories: string[] = [];
 
   afterEach(() => {
@@ -57,6 +62,17 @@ describe('scanner Silo mapping refresh', () => {
     const mappings = new SiloFileMappingStore(database);
     const serverKey = siloServerKey('http://silo:8080');
     mappings.record('file-1', serverKey, mediaPath, 'mapped', 149, 'movie-tmdb-123');
+    const providerMappings = new PlaybackServerMappingStore(database);
+    const plexServerKey = playbackServerKey('plex', 'plex-server-1');
+    providerMappings.recordBatch('plex', plexServerKey, [{
+      mediaFileId: 'file-1',
+      mappedPath: mediaPath,
+      status: 'mapped',
+      reason: null,
+      providerItemId: 'rating-key-1',
+      providerMediaId: 'part-1',
+      providerStreamPath: '/library/parts/1/file.mkv'
+    }]);
 
     const config = loadConfig({
       DATABASE_PATH: path.join(directory, 'media.db'),
@@ -80,12 +96,17 @@ describe('scanner Silo mapping refresh', () => {
       { reconcileAvailableFromLibrary: () => 0 } as unknown as RequestService,
       config,
       { info: vi.fn(), warn: vi.fn(), error: vi.fn() } as any,
-      mappings
+      mappings,
+      new PlaybackServersService(settings, providerMappings)
     );
 
     await scanner.scan('changed');
 
     expect(mappings.get('file-1', serverKey)?.status).toBe('stale');
+    expect(providerMappings.get('plex', plexServerKey, 'file-1')).toMatchObject({
+      status: 'stale',
+      reason: 'local_file_changed'
+    });
     database.close();
   });
 });

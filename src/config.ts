@@ -55,9 +55,11 @@ export interface AppConfig {
   jellyfinUrl: string;
   jellyfinApiKey: string;
   jellyfinUserId: string;
+  jellyfinPathMappings: string;
   plexEnabled: boolean;
   plexUrl: string;
   plexToken: string;
+  plexPathMappings: string;
   showDirectPlay: boolean;
   fallbackAddonEnabled: boolean;
   fallbackAddonManifestUrl: string;
@@ -186,11 +188,13 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     ),
     jellyfinApiKey: env.JELLYFIN_API_KEY?.trim() || '',
     jellyfinUserId: env.JELLYFIN_USER_ID?.trim() || '',
+    jellyfinPathMappings: env.JELLYFIN_PATH_MAPPINGS?.trim() || '',
     plexEnabled: booleanValue(env.PLEX_ENABLED, false),
     plexUrl: cleanBaseUrl(
       env.PLEX_URL || 'http://plex:32400'
     ),
     plexToken: env.PLEX_TOKEN?.trim() || '',
+    plexPathMappings: env.PLEX_PATH_MAPPINGS?.trim() || '',
     showDirectPlay: booleanValue(env.SHOW_DIRECT_PLAY, true),
     fallbackAddonEnabled: booleanValue(env.FALLBACK_ADDON_ENABLED, false),
     fallbackAddonManifestUrl: env.FALLBACK_ADDON_MANIFEST_URL?.trim() || '',

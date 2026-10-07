@@ -228,5 +228,30 @@ export const migrations = [
     ON playback_outcomes(last_observed_at);
 
   CREATE INDEX IF NOT EXISTS playback_outcomes_device_idx
-    ON playback_outcomes(device_id);`
+    ON playback_outcomes(device_id);`,
+  `CREATE TABLE IF NOT EXISTS playback_server_mappings (
+    media_file_id TEXT NOT NULL REFERENCES media_files(id) ON DELETE CASCADE,
+    provider TEXT NOT NULL CHECK(provider IN ('jellyfin','plex')),
+    server_key TEXT NOT NULL,
+    provider_item_id TEXT,
+    provider_media_id TEXT,
+    provider_stream_path TEXT,
+    status TEXT NOT NULL CHECK(status IN ('mapped','not_found','stale','error')),
+    reason TEXT CHECK(reason IS NULL OR reason IN (
+      'no_exact_path',
+      'ambiguous_exact_path',
+      'invalid_provider_item',
+      'local_file_changed'
+    )),
+    mapped_path TEXT NOT NULL,
+    updated_at INTEGER NOT NULL,
+    PRIMARY KEY(media_file_id, provider, server_key),
+    CHECK(status != 'mapped' OR (
+      provider_item_id IS NOT NULL AND provider_media_id IS NOT NULL
+    )),
+    CHECK(status != 'mapped' OR provider != 'plex' OR provider_stream_path IS NOT NULL)
+  );
+
+  CREATE INDEX IF NOT EXISTS playback_server_mappings_scope_status_idx
+    ON playback_server_mappings(provider, server_key, status);`
 ] as const;

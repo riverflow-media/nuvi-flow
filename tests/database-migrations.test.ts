@@ -48,6 +48,9 @@ describe('database migrations', () => {
     expect(upgraded.sqlite.prepare(
       "SELECT name FROM sqlite_master WHERE type='table' AND name='playback_outcomes'"
     ).get()).toBeTruthy();
+    expect(upgraded.sqlite.prepare(
+      "SELECT name FROM sqlite_master WHERE type='table' AND name='playback_server_mappings'"
+    ).get()).toBeTruthy();
 
     const backup = new Database(backupPath!, { readonly: true });
     expect(backup.pragma('quick_check', { simple: true })).toBe('ok');
@@ -66,6 +69,9 @@ describe('database migrations', () => {
     ).get()).toBeTruthy();
     expect(backup.prepare(
       "SELECT name FROM sqlite_master WHERE type='table' AND name='playback_outcomes'"
+    ).get()).toBeTruthy();
+    expect(backup.prepare(
+      "SELECT name FROM sqlite_master WHERE type='table' AND name='playback_server_mappings'"
     ).get()).toBeUndefined();
     backup.close();
     upgraded.close();

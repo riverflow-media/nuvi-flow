@@ -71,6 +71,27 @@ export interface SiloFileMappingRow {
   updated_at: number;
 }
 
+export type PlaybackServerProvider = 'jellyfin' | 'plex';
+
+export type PlaybackServerMappingReason =
+  | 'no_exact_path'
+  | 'ambiguous_exact_path'
+  | 'invalid_provider_item'
+  | 'local_file_changed';
+
+export interface PlaybackServerMappingRow {
+  media_file_id: string;
+  provider: PlaybackServerProvider;
+  server_key: string;
+  provider_item_id: string | null;
+  provider_media_id: string | null;
+  provider_stream_path: string | null;
+  status: 'mapped' | 'not_found' | 'stale' | 'error';
+  reason: PlaybackServerMappingReason | null;
+  mapped_path: string;
+  updated_at: number;
+}
+
 export type DeviceCapabilityCategory =
   | 'max_resolution'
   | 'video_codec'

@@ -11,6 +11,7 @@ import { inspectMedia } from './ffprobe.js';
 import type { RequestService } from './requester.js';
 import type { SettingsService } from './settings.js';
 import type { SiloFileMappingStore } from './silo-file-mappings.js';
+import type { PlaybackServersService } from './playback-servers.js';
 import type { TmdbService } from './tmdb.js';
 
 interface FoundFile { absolutePath: string; relativePath: string; type: MediaType; size: number; mtimeMs: number }
@@ -103,7 +104,8 @@ export class MediaScanner {
     private readonly requester: RequestService,
     private readonly config: AppConfig,
     private readonly logger: FastifyBaseLogger,
-    private readonly siloMappings?: SiloFileMappingStore
+    private readonly siloMappings?: SiloFileMappingStore,
+    private readonly playbackServers?: PlaybackServersService
   ) {
     this.database.sqlite.prepare(
       `UPDATE scan_runs
@@ -409,7 +411,10 @@ export class MediaScanner {
         parsedEpisode?.episodeStart ?? null, parsedEpisode?.episodeEnd ?? null, mediaItemId, confidence,
         existing?.manual_override ?? 0, status, probe.compatibilityWarning, null, existing?.added_at || now, now, scanTime
       );
-    if (fileChanged) this.siloMappings?.markStale(id);
+    if (fileChanged) {
+      this.siloMappings?.markStale(id);
+      this.playbackServers?.markMappingsStale(id);
+    }
     signal.throwIfAborted();
     await this.updateExternalSubtitles(id, file, signal);
     return status;

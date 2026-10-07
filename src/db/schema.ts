@@ -88,6 +88,29 @@ export const siloFileMappings = sqliteTable('silo_file_mappings', {
   index('silo_file_mappings_status_idx').on(table.status)
 ]);
 
+export const playbackServerMappings = sqliteTable('playback_server_mappings', {
+  mediaFileId: text('media_file_id').notNull().references(() => mediaFiles.id, { onDelete: 'cascade' }),
+  provider: text('provider', { enum: ['jellyfin', 'plex'] }).notNull(),
+  serverKey: text('server_key').notNull(),
+  providerItemId: text('provider_item_id'),
+  providerMediaId: text('provider_media_id'),
+  providerStreamPath: text('provider_stream_path'),
+  status: text('status', { enum: ['mapped', 'not_found', 'stale', 'error'] }).notNull(),
+  reason: text('reason', { enum: [
+    'no_exact_path',
+    'ambiguous_exact_path',
+    'invalid_provider_item',
+    'local_file_changed'
+  ] }),
+  mappedPath: text('mapped_path').notNull(),
+  updatedAt: integer('updated_at').notNull()
+}, (table) => [
+  uniqueIndex('playback_server_mappings_file_provider_server_uq')
+    .on(table.mediaFileId, table.provider, table.serverKey),
+  index('playback_server_mappings_scope_status_idx')
+    .on(table.provider, table.serverKey, table.status)
+]);
+
 export const playbackDevices = sqliteTable('playback_devices', {
   id: text('id').primaryKey(),
   identitySource: text('identity_source').notNull(),
