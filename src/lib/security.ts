@@ -215,6 +215,68 @@ export function verifySiloMediaToken(
   }
 }
 
+export interface JellyfinMediaTokenPayload {
+  v: 1;
+  sessionId: string;
+  resourceId: string;
+  exp: number;
+}
+
+const jellyfinSessionIdPattern =
+  /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/;
+const jellyfinResourceIdPattern = /^[a-f0-9]{32}$/;
+
+export function createJellyfinMediaToken(
+  sessionId: string,
+  resourceId: string,
+  expiresAt: number,
+  secret: string
+): { token: string; payload: JellyfinMediaTokenPayload } {
+  if (!jellyfinSessionIdPattern.test(sessionId) ||
+    !jellyfinResourceIdPattern.test(resourceId)) {
+    throw new Error('Invalid Jellyfin playback resource.');
+  }
+  const payload: JellyfinMediaTokenPayload = {
+    v: 1,
+    sessionId,
+    resourceId,
+    exp: expiresAt
+  };
+  const encoded = Buffer.from(JSON.stringify(payload)).toString('base64url');
+  return {
+    token: `${encoded}.${signature(encoded, secret)}`,
+    payload
+  };
+}
+
+export function verifyJellyfinMediaToken(
+  token: string,
+  secret: string,
+  now = Date.now()
+): JellyfinMediaTokenPayload | null {
+  const [encoded, suppliedSignature, extra] = token.split('.');
+  if (!encoded || !suppliedSignature || extra ||
+    !safeEqual(signature(encoded, secret), suppliedSignature)) {
+    return null;
+  }
+  try {
+    const payload = JSON.parse(
+      Buffer.from(encoded, 'base64url').toString('utf8')
+    ) as Partial<JellyfinMediaTokenPayload>;
+    if (payload.v !== 1 ||
+      typeof payload.sessionId !== 'string' ||
+      !jellyfinSessionIdPattern.test(payload.sessionId) ||
+      typeof payload.resourceId !== 'string' ||
+      !jellyfinResourceIdPattern.test(payload.resourceId) ||
+      typeof payload.exp !== 'number' || payload.exp <= now) {
+      return null;
+    }
+    return payload as JellyfinMediaTokenPayload;
+  } catch {
+    return null;
+  }
+}
+
 export interface FallbackMediaTokenPayload {
   v: 1;
   sessionId: string;

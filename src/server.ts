@@ -25,6 +25,7 @@ import { FallbackAddonService } from './services/playback/fallback-addon.js';
 import { NetworkProfileStore } from './services/playback/network-profiles.js';
 import { PlaybackActivityService } from './services/playback/playback-activity.js';
 import { PlaybackOutcomeStore } from './services/playback/playback-outcomes.js';
+import { JellyfinPlaybackService } from './services/playback/jellyfin-playback.js';
 import { RequestService } from './services/requester.js';
 import { SiloService } from './services/silo-service.js';
 import { SiloFileMappingStore } from './services/silo-file-mappings.js';
@@ -44,6 +45,7 @@ export interface BuiltApp {
   requester: RequestService;
   silo: SiloService;
   playbackServers: PlaybackServersService;
+  jellyfinPlayback: JellyfinPlaybackService;
   playbackServerMappings: PlaybackServerMappingStore;
   playbackSessions: PlaybackSessionRegistry;
   deviceCapabilities: DeviceCapabilityStore;
@@ -130,14 +132,24 @@ export async function buildApp(config: AppConfig): Promise<BuiltApp> {
     config.streamSecret,
     config.trustProxy
   );
+  const jellyfinPlayback = new JellyfinPlaybackService(
+    settings,
+    playbackServers,
+    deviceCapabilities,
+    app.log
+  );
   const playbackActivity = new PlaybackActivityService(
     playbackSessions,
     fallbackAddon,
-    { outcomes: playbackOutcomes }
+    {
+      outcomes: playbackOutcomes,
+      jellyfin: jellyfinPlayback
+    }
   );
   playback.setFallbackAddon(fallbackAddon);
 
   app.addHook('onClose', async () => {
+    await jellyfinPlayback.close();
     await playback.close();
     playbackActivity.close();
     fallbackAddon.close();
@@ -229,6 +241,7 @@ export async function buildApp(config: AppConfig): Promise<BuiltApp> {
     playbackOutcomes,
     databaseBackups,
     playbackServers,
+    jellyfinPlayback,
     config
   );
 
@@ -236,8 +249,14 @@ export async function buildApp(config: AppConfig): Promise<BuiltApp> {
     if (request.url.startsWith('/admin')) return;
     reply.header('Access-Control-Allow-Origin', '*');
     reply.header('Access-Control-Allow-Methods', 'GET, HEAD, OPTIONS');
-    reply.header('Access-Control-Allow-Headers', 'Range, Content-Type');
-    reply.header('Access-Control-Expose-Headers', 'Accept-Ranges, Content-Range, Content-Length');
+    reply.header(
+      'Access-Control-Allow-Headers',
+      'Range, Content-Type, Accept, If-None-Match, If-Modified-Since, X-Nuvi-Flow-Device-Id, X-Stremio-Device-Id, X-Stremio-Client, X-Stremio-Version'
+    );
+    reply.header(
+      'Access-Control-Expose-Headers',
+      'Accept-Ranges, Content-Range, Content-Length, ETag, Last-Modified, X-Nuvi-Flow-Playback-Id'
+    );
     if (request.method === 'OPTIONS') return reply.code(204).send();
   });
   app.get('/health', async (_request, reply) => {
@@ -271,6 +290,7 @@ export async function buildApp(config: AppConfig): Promise<BuiltApp> {
     settings,
     playback,
     silo,
+    jellyfinPlayback,
     fallbackAddon,
     networkProfiles,
     playbackActivity
@@ -285,6 +305,7 @@ export async function buildApp(config: AppConfig): Promise<BuiltApp> {
     config,
     silo,
     playbackServers,
+    jellyfinPlayback,
     fallbackAddon,
     playback,
     playbackActivity,
@@ -309,6 +330,7 @@ export async function buildApp(config: AppConfig): Promise<BuiltApp> {
     requester,
     silo,
     playbackServers,
+    jellyfinPlayback,
     playbackServerMappings,
     playbackSessions,
     deviceCapabilities,

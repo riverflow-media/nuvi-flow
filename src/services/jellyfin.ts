@@ -29,6 +29,77 @@ export interface JellyfinMediaCandidate {
   path: string;
 }
 
+export interface JellyfinDirectPlayProfile {
+  Container: string;
+  Type: 'Video';
+  VideoCodec: string;
+  AudioCodec: string;
+}
+
+export interface JellyfinTranscodingProfile {
+  Container: string;
+  Type: 'Video';
+  VideoCodec: string;
+  AudioCodec: string;
+  Protocol: 'hls' | 'http';
+  Context: 'Streaming' | 'Static';
+  MaxAudioChannels: string;
+  MinSegments: number;
+  SegmentLength: number;
+  BreakOnNonKeyFrames: boolean;
+  CopyTimestamps: boolean;
+  EnableSubtitlesInManifest: boolean;
+}
+
+export interface JellyfinDeviceProfile {
+  Name: string;
+  MaxStaticBitrate: number;
+  MaxStreamingBitrate: number;
+  DirectPlayProfiles: JellyfinDirectPlayProfile[];
+  TranscodingProfiles: JellyfinTranscodingProfile[];
+  ContainerProfiles: [];
+  CodecProfiles: [];
+  SubtitleProfiles: [];
+}
+
+export interface JellyfinPlaybackRequest {
+  userId: string;
+  mediaSourceId: string;
+  deviceId: string;
+  deviceProfile: JellyfinDeviceProfile;
+  allowVideoStreamCopy: boolean;
+  allowAudioStreamCopy: boolean;
+}
+
+export interface JellyfinPlaybackMediaSource {
+  Id?: unknown;
+  Container?: unknown;
+  SupportsDirectPlay?: unknown;
+  SupportsDirectStream?: unknown;
+  SupportsTranscoding?: unknown;
+  TranscodingUrl?: unknown;
+  TranscodingSubProtocol?: unknown;
+  TranscodingContainer?: unknown;
+  MediaStreams?: unknown;
+}
+
+export interface JellyfinPlaybackInfoResponse {
+  ErrorCode?: unknown;
+  MediaSources?: unknown;
+  PlaySessionId?: unknown;
+}
+
+export type JellyfinPlayMethod = 'DirectPlay' | 'DirectStream' | 'Transcode';
+
+export interface JellyfinPlaybackSessionReference {
+  itemId: string;
+  mediaSourceId: string;
+  playSessionId: string;
+  deviceId: string;
+  playMethod: JellyfinPlayMethod;
+  transcoding: boolean;
+}
+
 interface JellyfinSystemInfoResponse {
   Id?: unknown;
   ServerName?: unknown;
@@ -77,9 +148,9 @@ function optionalString(value: unknown): string | null {
 /**
  * Minimal authenticated Jellyfin control-plane client.
  *
- * Playback URLs intentionally remain out of this first boundary. The next
- * roadmap phase will add exact media mapping and server-selected PlaybackInfo
- * decisions without ever placing the access token in a player URL.
+ * Credentials remain server-side for both control-plane and media requests.
+ * Playback URLs returned by Jellyfin are consumed only by the application
+ * playback boundary and are never handed directly to a player.
  */
 export class JellyfinClient {
   private readonly baseUrl: string;
@@ -89,6 +160,10 @@ export class JellyfinClient {
     private readonly apiKey: string
   ) {
     this.baseUrl = baseUrl.trim().replace(/\/+$/, '');
+  }
+
+  get origin(): string {
+    return new URL(this.baseUrl).origin;
   }
 
   async systemInfo(): Promise<JellyfinServerInfo> {
@@ -175,22 +250,133 @@ export class JellyfinClient {
     throw new JellyfinApiError('Jellyfin media inventory exceeded the safe page limit.');
   }
 
+  async playbackInfo(
+    itemId: string,
+    request: JellyfinPlaybackRequest
+  ): Promise<JellyfinPlaybackInfoResponse> {
+    return this.requestJson<JellyfinPlaybackInfoResponse>(
+      `/Items/${encodeURIComponent(itemId)}/PlaybackInfo`,
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          UserId: request.userId,
+          MediaSourceId: request.mediaSourceId,
+          MaxStreamingBitrate: request.deviceProfile.MaxStreamingBitrate,
+          MaxAudioChannels: 2,
+          EnableDirectPlay: true,
+          EnableDirectStream: true,
+          EnableTranscoding: true,
+          AllowVideoStreamCopy: request.allowVideoStreamCopy,
+          AllowAudioStreamCopy: request.allowAudioStreamCopy,
+          AutoOpenLiveStream: false,
+          AlwaysBurnInSubtitleWhenTranscoding: false,
+          DeviceProfile: request.deviceProfile
+        })
+      },
+      request.deviceId
+    );
+  }
+
+  async fetchMedia(
+    url: URL,
+    deviceId: string,
+    init: Pick<RequestInit, 'method' | 'headers' | 'signal'> = {}
+  ): Promise<Response> {
+    if (!['http:', 'https:'].includes(url.protocol) ||
+      url.origin !== this.origin || url.username || url.password || url.hash) {
+      throw new JellyfinApiError('Jellyfin returned an invalid media URL.');
+    }
+    const headers = new Headers(init.headers);
+    this.applyAuthentication(headers, deviceId);
+    try {
+      return await fetch(url, {
+        method: init.method,
+        headers,
+        signal: init.signal,
+        redirect: 'manual'
+      });
+    } catch {
+      throw new JellyfinApiError('Jellyfin media request failed.');
+    }
+  }
+
+  async reportPlaybackStart(
+    session: JellyfinPlaybackSessionReference
+  ): Promise<void> {
+    await this.requestNoContent('/Sessions/Playing', {
+      method: 'POST',
+      body: JSON.stringify({
+        ItemId: session.itemId,
+        MediaSourceId: session.mediaSourceId,
+        PlaySessionId: session.playSessionId,
+        PlayMethod: session.playMethod,
+        PositionTicks: 0,
+        CanSeek: true,
+        IsPaused: false
+      })
+    }, session.deviceId);
+  }
+
+  async stopPlayback(
+    session: JellyfinPlaybackSessionReference
+  ): Promise<void> {
+    let encodingError: unknown;
+    if (session.transcoding) {
+      try {
+        await this.requestNoContent('/Videos/ActiveEncodings', {
+          method: 'DELETE'
+        }, session.deviceId, {
+          DeviceId: session.deviceId,
+          PlaySessionId: session.playSessionId
+        }, true);
+      } catch (error) {
+        encodingError = error;
+      }
+    }
+    try {
+      await this.requestNoContent('/Sessions/Playing/Stopped', {
+        method: 'POST',
+        body: JSON.stringify({
+          ItemId: session.itemId,
+          MediaSourceId: session.mediaSourceId,
+          PlaySessionId: session.playSessionId,
+          PositionTicks: 0,
+          Failed: false
+        })
+      }, session.deviceId, {}, true);
+    } catch (error) {
+      throw error;
+    }
+    if (encodingError) throw encodingError;
+  }
+
   private async get<T>(
     pathname: string,
+    query: Record<string, string | number | boolean> = {}
+  ): Promise<T> {
+    return this.requestJson<T>(pathname, {}, 'nuvi-flow-server', query);
+  }
+
+  private async requestJson<T>(
+    pathname: string,
+    init: Pick<RequestInit, 'method' | 'body'>,
+    deviceId: string,
     query: Record<string, string | number | boolean> = {}
   ): Promise<T> {
     const url = new URL(`${this.baseUrl}${pathname}`);
     for (const [key, value] of Object.entries(query)) {
       url.searchParams.set(key, String(value));
     }
+    const headers = new Headers({ Accept: 'application/json' });
+    if (init.body !== undefined) headers.set('Content-Type', 'application/json');
+    this.applyAuthentication(headers, deviceId);
     let response: Response;
     try {
       response = await fetch(url, {
-        headers: {
-          Accept: 'application/json',
-          'X-Emby-Token': this.apiKey,
-          Authorization: `MediaBrowser Client="Nuvi-Flow", Device="Nuvi-Flow Server", DeviceId="nuvi-flow-server", Version="${buildInfo().version}", Token="${this.apiKey}"`
-        },
+        method: init.method,
+        body: init.body,
+        headers,
+        redirect: 'manual',
         signal: AbortSignal.timeout(10_000)
       });
     } catch (error) {
@@ -211,5 +397,49 @@ export class JellyfinClient {
     } catch {
       throw new JellyfinApiError('Jellyfin returned an invalid JSON response.');
     }
+  }
+
+  private async requestNoContent(
+    pathname: string,
+    init: Pick<RequestInit, 'method' | 'body'>,
+    deviceId: string,
+    query: Record<string, string | number | boolean> = {},
+    tolerateMissing = false
+  ): Promise<void> {
+    const url = new URL(`${this.baseUrl}${pathname}`);
+    for (const [key, value] of Object.entries(query)) {
+      url.searchParams.set(key, String(value));
+    }
+    const headers = new Headers({ Accept: 'application/json' });
+    if (init.body !== undefined) headers.set('Content-Type', 'application/json');
+    this.applyAuthentication(headers, deviceId);
+    let response: Response;
+    try {
+      response = await fetch(url, {
+        method: init.method,
+        body: init.body,
+        headers,
+        redirect: 'manual',
+        signal: AbortSignal.timeout(10_000)
+      });
+    } catch {
+      throw new JellyfinApiError('Jellyfin request failed.');
+    }
+    if (!response.ok && !(tolerateMissing && response.status === 404)) {
+      await response.body?.cancel();
+      throw new JellyfinApiError(
+        `Jellyfin returned HTTP ${response.status}.`,
+        response.status
+      );
+    }
+    await response.body?.cancel();
+  }
+
+  private applyAuthentication(headers: Headers, deviceId: string): void {
+    headers.set('X-Emby-Token', this.apiKey);
+    headers.set(
+      'Authorization',
+      `MediaBrowser Client="Nuvi-Flow", Device="Nuvi-Flow Server", DeviceId="${deviceId}", Version="${buildInfo().version}", Token="${this.apiKey}"`
+    );
   }
 }

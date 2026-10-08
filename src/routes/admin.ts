@@ -40,6 +40,7 @@ import type { PlaybackService } from '../services/playback/playback-service.js';
 import type { SystemDiagnosticsService } from '../services/system-diagnostics.js';
 import type { DatabaseBackupService } from '../services/database-backups.js';
 import type { PlaybackServersService } from '../services/playback-servers.js';
+import type { JellyfinPlaybackService } from '../services/playback/jellyfin-playback.js';
 import {
   parsePathPrefixMappings,
   PathPrefixMappingError
@@ -296,6 +297,7 @@ export function registerAdminRoutes(
   config: AppConfig,
   silo: SiloService,
   playbackServers: PlaybackServersService,
+  jellyfinPlayback: JellyfinPlaybackService,
   fallbackAddon: FallbackAddonService,
   playback: PlaybackService,
   playbackActivity: PlaybackActivityService,
@@ -460,6 +462,7 @@ export function registerAdminRoutes(
           maxConcurrentStarts: operations.starts.maxConcurrent,
           maxQueuedStarts: operations.starts.maxQueued
         },
+        jellyfin: jellyfinPlayback.counts(),
         fallback: fallbackAddon.counts()
       },
       generatedAt: Date.now()
@@ -475,13 +478,18 @@ export function registerAdminRoutes(
       return reply.code(400).send({ error: 'Invalid playback ID.' });
     }
     const stoppedSilo = await playback.stopPlayback(playbackId);
+    const stoppedJellyfin = await jellyfinPlayback.stopPlayback(playbackId);
     const stoppedFallback = fallbackAddon.stopPlayback(playbackId);
-    if (!stoppedSilo && !stoppedFallback) {
+    if (!stoppedSilo && !stoppedJellyfin && !stoppedFallback) {
       return reply.code(404).send({ error: 'Playback session is no longer active.' });
     }
     request.log.info({
       playback_id: playbackId,
-      provider: stoppedSilo ? 'silo' : 'fallback_addon',
+      provider: stoppedSilo
+        ? 'silo'
+        : stoppedJellyfin
+          ? 'jellyfin'
+          : 'fallback_addon',
       retirement_reason: 'admin_stopped'
     }, 'Playback session stopped by administrator');
     return reply.send({ ok: true });

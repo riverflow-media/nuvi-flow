@@ -117,6 +117,96 @@ describe('playback server control plane', () => {
     }
   });
 
+  it('negotiates and proxies Jellyfin playback without URL credentials', async () => {
+    const fetchMock = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith('/Items/item-1/PlaybackInfo')) {
+        const body = JSON.parse(String(init?.body));
+        expect(body).toMatchObject({
+          UserId: 'user-1',
+          MediaSourceId: 'source-1',
+          EnableDirectPlay: true,
+          EnableDirectStream: true,
+          EnableTranscoding: true,
+          AllowVideoStreamCopy: true,
+          AllowAudioStreamCopy: false
+        });
+        return json({ PlaySessionId: 'play-1', MediaSources: [] });
+      }
+      if (url.includes('/Videos/item-1/stream')) {
+        expect(new Headers(init?.headers).get('range')).toBe('bytes=0-9');
+        return new Response('0123456789', { status: 206 });
+      }
+      return json({}, 404);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const client = new JellyfinClient(
+      'http://jellyfin:8096/',
+      'private-jellyfin-key'
+    );
+    const profile = {
+      Name: 'test',
+      MaxStaticBitrate: 100_000_000,
+      MaxStreamingBitrate: 100_000_000,
+      DirectPlayProfiles: [],
+      TranscodingProfiles: [],
+      ContainerProfiles: [],
+      CodecProfiles: [],
+      SubtitleProfiles: []
+    } as const;
+
+    await client.playbackInfo('item-1', {
+      userId: 'user-1',
+      mediaSourceId: 'source-1',
+      deviceId: 'device_1234567890abcdef12345678',
+      deviceProfile: profile,
+      allowVideoStreamCopy: true,
+      allowAudioStreamCopy: false
+    });
+    const media = await client.fetchMedia(
+      new URL('http://jellyfin:8096/Videos/item-1/stream'),
+      'device_1234567890abcdef12345678',
+      { method: 'GET', headers: new Headers({ range: 'bytes=0-9' }) }
+    );
+    expect(media.status).toBe(206);
+
+    for (const [url, init] of fetchMock.mock.calls as Array<[string | URL, RequestInit]>) {
+      expect(String(url)).not.toContain('private-jellyfin-key');
+      const headers = new Headers(init.headers);
+      expect(headers.get('X-Emby-Token')).toBe('private-jellyfin-key');
+      expect(headers.get('Authorization')).toContain('Token="private-jellyfin-key"');
+    }
+  });
+
+  it('still reports Jellyfin playback stopped when encoding cleanup fails', async () => {
+    const fetchMock = vi.fn(async (input: string | URL | Request) => {
+      const url = String(input);
+      if (url.includes('/Videos/ActiveEncodings')) return json({}, 500);
+      if (url.endsWith('/Sessions/Playing/Stopped')) {
+        return new Response(null, { status: 204 });
+      }
+      return json({}, 404);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const client = new JellyfinClient(
+      'http://jellyfin:8096',
+      'private-jellyfin-key'
+    );
+
+    await expect(client.stopPlayback({
+      itemId: 'item-1',
+      mediaSourceId: 'source-1',
+      playSessionId: 'play-session-1',
+      deviceId: 'device_1234567890abcdef12345678',
+      playMethod: 'Transcode',
+      transcoding: true
+    })).rejects.toMatchObject({ status: 500 });
+    expect(fetchMock.mock.calls.map(call => String(call[0]))).toEqual([
+      'http://jellyfin:8096/Videos/ActiveEncodings?DeviceId=device_1234567890abcdef12345678&PlaySessionId=play-session-1',
+      'http://jellyfin:8096/Sessions/Playing/Stopped'
+    ]);
+  });
+
   it('uses saved settings through one application service boundary', async () => {
     const fetchMock = vi.fn(async (input: string | URL | Request) => {
       const url = String(input);

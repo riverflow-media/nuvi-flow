@@ -3,6 +3,7 @@ import type { MediaFileRow } from '../../types.js';
 import type { FallbackAddonService } from './fallback-addon.js';
 import type { PlaybackSessionRegistry } from './playback-sessions.js';
 import type { PlaybackOutcomeStore } from './playback-outcomes.js';
+import type { JellyfinPlaybackService } from './jellyfin-playback.js';
 
 const DEFAULT_IDLE_WINDOW_MS = 15_000;
 const DEFAULT_DIRECT_LINGER_MS = 30_000;
@@ -12,6 +13,9 @@ export type PlaybackActivityRoute =
   | 'original_http'
   | 'server_remux_progressive'
   | 'server_remux_hls'
+  | 'server_audio_transcode_progressive'
+  | 'server_audio_transcode_hls'
+  | 'server_transcode_progressive'
   | 'server_transcode_hls'
   | 'external_direct_http';
 
@@ -33,7 +37,7 @@ export interface PlaybackActivityRecord {
   mediaId: string | null;
   mediaType: 'movie' | 'series' | null;
   deviceId: string | null;
-  provider: 'nuvi-flow' | 'silo' | 'fallback-addon';
+  provider: 'nuvi-flow' | 'silo' | 'jellyfin' | 'fallback-addon';
   route: PlaybackActivityRoute;
   state: PlaybackActivityState;
   stoppable: boolean;
@@ -102,6 +106,7 @@ interface PlaybackActivityOptions {
   directLingerMs?: number;
   cleanupIntervalMs?: number;
   outcomes?: PlaybackOutcomeStore;
+  jellyfin?: JellyfinPlaybackService;
 }
 
 function finiteNumber(value: unknown): number | null {
@@ -130,6 +135,7 @@ export class PlaybackActivityService {
   private readonly directLingerMs: number;
   private readonly cleanupTimer: NodeJS.Timeout | null;
   private readonly outcomes: PlaybackOutcomeStore | null;
+  private readonly jellyfin: JellyfinPlaybackService | null;
 
   constructor(
     private readonly siloSessions: PlaybackSessionRegistry,
@@ -140,6 +146,7 @@ export class PlaybackActivityService {
     this.idleWindowMs = options.idleWindowMs ?? DEFAULT_IDLE_WINDOW_MS;
     this.directLingerMs = options.directLingerMs ?? DEFAULT_DIRECT_LINGER_MS;
     this.outcomes = options.outcomes ?? null;
+    this.jellyfin = options.jellyfin ?? null;
     const interval = options.cleanupIntervalMs ?? 15_000;
     this.cleanupTimer = interval > 0
       ? setInterval(() => this.cleanup(), interval)
@@ -231,10 +238,18 @@ export class PlaybackActivityService {
     return this.beginTransfer(playbackId);
   }
 
+  beginJellyfin(sessionId: string): PlaybackActivityHandle | null {
+    const playbackId = this.jellyfin?.playbackIdForSession(sessionId);
+    return playbackId ? this.beginTransfer(playbackId) : null;
+  }
+
   async snapshot(): Promise<PlaybackActivityRecord[]> {
     this.cleanup();
     const now = this.now();
-    const silo = await this.siloSessions.activeSnapshot();
+    const [silo, jellyfin] = await Promise.all([
+      this.siloSessions.activeSnapshot(),
+      this.jellyfin?.activeSnapshot() ?? Promise.resolve([])
+    ]);
     const fallback = this.fallbackAddon.activeSnapshot();
     const records: PlaybackActivityRecord[] = [];
 
@@ -327,6 +342,38 @@ export class PlaybackActivityService {
           attempt: session.candidateAttempt,
           count: session.candidateCount
         },
+        createdAt: session.createdAt,
+        lastActivityAt,
+        expiresAt: session.expiresAt
+      });
+    }
+
+    for (const session of jellyfin) {
+      const transfer = this.transfers.get(session.playbackId);
+      const lastActivityAt = Math.max(
+        session.lastAccess,
+        transfer?.lastActivityAt ?? 0
+      );
+      records.push({
+        playbackId: session.playbackId,
+        mediaFileId: session.mediaFileId,
+        mediaId: null,
+        mediaType: session.mediaType,
+        deviceId: session.deviceId,
+        provider: 'jellyfin',
+        route: session.route,
+        state: this.stateFor(
+          session.createdAt,
+          lastActivityAt,
+          session.mediaRequestCount,
+          transfer
+        ),
+        stoppable: true,
+        season: session.season,
+        episode: session.episode,
+        target: { ...session.target },
+        fallback: null,
+        candidate: null,
         createdAt: session.createdAt,
         lastActivityAt,
         expiresAt: session.expiresAt

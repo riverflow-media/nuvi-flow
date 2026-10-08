@@ -319,7 +319,7 @@ the declared SDR target.
 
 ## Playback-server expansion
 
-The existing Silo path remains the production playback implementation while
+The existing Silo path remains the reference playback implementation while
 Jellyfin and Plex are added behind the same application-owned boundary. Every
 provider must preserve the universal Auto order: byte-for-byte direct play,
 container-only remux, audio-only conversion, and video conversion last. Nuvi-Flow
@@ -357,7 +357,7 @@ will orchestrate and proxy; it will not duplicate a provider's FFmpeg pipeline.
   provider URLs, credentials, and internal item identifiers stay out of mapping
   status and diagnostic responses
 
-### Next: Jellyfin playback implementation
+### Completed Jellyfin playback implementation
 
 - Translate the existing device capability snapshot into a bounded Jellyfin
   device profile and request `PlaybackInfo` for the configured playback user
@@ -368,8 +368,18 @@ will orchestrate and proxy; it will not duplicate a provider's FFmpeg pipeline.
   validator, and cancellation behavior already proven by the Silo proxy
 - Track and stop exact Jellyfin playback/transcode sessions through the unified
   activity, expiry, fallback, and graceful-shutdown lifecycle
+- Coalesce equivalent negotiations and reuse sessions only when provider,
+  mapping, user, credential, device, capability revision, and episode context
+  remain compatible
+- Expose only opaque session/resource signatures to clients and aggregate
+  session/transfer counts to Activity and System Health; internal URLs, item
+  identifiers, play-session IDs, and credentials remain private
+- Cover 4K preservation, explicit capability denial, direct play, remux,
+  audio-only conversion, video transcode, Range proxying, nested HLS rewriting,
+  origin/item isolation, expiry, administrator stop, and shutdown cleanup with
+  focused regressions
 
-### Then: Plex playback implementation
+### Next: Plex playback implementation
 
 - Use the authenticated PMS playback-decision endpoint with the same conservative
   capability snapshot and direct-first policy

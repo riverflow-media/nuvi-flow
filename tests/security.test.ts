@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import {
   createFallbackMediaToken,
+  createJellyfinMediaToken,
   createSiloMediaToken,
   createStreamToken,
   verifyFallbackMediaToken,
+  verifyJellyfinMediaToken,
   verifySiloMediaToken,
   verifyStreamToken
 } from '../src/lib/security.js';
@@ -154,6 +156,33 @@ describe('HMAC stream tokens', () => {
     expect(token).not.toContain('https');
     expect(() => createFallbackMediaToken('https://cdn.example/file', 10_000, secret))
       .toThrow('Invalid fallback playback session');
+  });
+
+  it('signs only opaque Jellyfin session and resource identifiers', () => {
+    const sessionId = '11111111-1111-4111-8111-111111111111';
+    const resourceId = '0123456789abcdef0123456789abcdef';
+    const { token, payload } = createJellyfinMediaToken(
+      sessionId,
+      resourceId,
+      10_000,
+      secret
+    );
+    expect(payload).toEqual({
+      v: 1,
+      sessionId,
+      resourceId,
+      exp: 10_000
+    });
+    expect(verifyJellyfinMediaToken(token, secret, 9_000)).toEqual(payload);
+    expect(verifyJellyfinMediaToken(`${token}x`, secret, 9_000)).toBeNull();
+    expect(verifyJellyfinMediaToken(token, secret, 10_000)).toBeNull();
+    expect(token).not.toContain('jellyfin');
+    expect(() => createJellyfinMediaToken(
+      sessionId,
+      'https://jellyfin/private.m3u8',
+      10_000,
+      secret
+    )).toThrow('Invalid Jellyfin playback resource');
   });
 });
 

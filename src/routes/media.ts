@@ -9,8 +9,10 @@ import type { AppDatabase } from '../db/index.js';
 import { parseByteRange } from '../lib/range.js';
 import {
   createFallbackMediaToken,
+  createJellyfinMediaToken,
   createSiloMediaToken,
   verifyFallbackMediaToken,
+  verifyJellyfinMediaToken,
   verifySiloMediaToken,
   verifyStreamToken
 } from '../lib/security.js';
@@ -25,8 +27,13 @@ import {
   isHlsManifestPath,
   parseHlsSegmentTimeline,
   readHlsManifest,
-  rewriteHlsManifest
+  rewriteHlsManifest,
+  rewriteHlsManifestWithResolver
 } from '../services/playback/hls-proxy.js';
+import {
+  JellyfinPlaybackError,
+  type JellyfinPlaybackService
+} from '../services/playback/jellyfin-playback.js';
 import type { SiloService } from '../services/silo-service.js';
 import type {
   FallbackAddonService,
@@ -470,6 +477,247 @@ async function serveFallbackMedia(
   return reply.send(stream);
 }
 
+function redirectToDirectMedia(
+  reply: FastifyReply,
+  streamToken: string
+): FastifyReply {
+  return reply
+    .code(302)
+    .header('Location', '/media/' + encodeURIComponent(streamToken))
+    .header('X-Nuvi-Flow-Fallback', 'direct')
+    .header('Cache-Control', 'no-store')
+    .send();
+}
+
+async function serveJellyfinStream(
+  request: FastifyRequest,
+  reply: FastifyReply,
+  database: AppDatabase,
+  settings: SettingsService,
+  config: AppConfig,
+  jellyfinPlayback: JellyfinPlaybackService
+): Promise<FastifyReply> {
+  const authorized = authorize(request, database, config);
+  if (!authorized) {
+    return reply.code(401).header('Cache-Control', 'no-store')
+      .send({ error: 'Invalid or expired stream token' });
+  }
+  const { token: streamToken } = request.params as { token: string };
+  if (!settings.jellyfinEnabled || !settings.jellyfinUrl ||
+    !settings.jellyfinApiKey || !settings.jellyfinUserId) {
+    return redirectToDirectMedia(reply, streamToken);
+  }
+  const item = database.sqlite.prepare(
+    'SELECT * FROM media_items WHERE id=?'
+  ).get(authorized.file.media_item_id) as MediaItemRow | undefined;
+  if (!item) {
+    return reply.code(404).header('Cache-Control', 'no-store')
+      .send({ error: 'Media item not found.' });
+  }
+  let episode: { season: number; episode: number } | undefined;
+  if (item.type === 'series') {
+    const season = authorized.token?.season;
+    const episodeNumber = authorized.token?.episode;
+    if (season === undefined || episodeNumber === undefined) {
+      return reply.code(400).header('Cache-Control', 'no-store')
+        .send({ error: 'Episode context is required for Jellyfin TV playback.' });
+    }
+    episode = { season, episode: episodeNumber };
+  }
+  const fallbackIdentity = authorized.token!.deviceId
+    ? null
+    : deriveDeviceIdentity({
+        installationId: settings.addonAccessToken,
+        explicitDeviceId:
+          headerValue(request, 'x-nuvi-flow-device-id') ||
+          headerValue(request, 'x-stremio-device-id'),
+        clientName: headerValue(request, 'x-stremio-client'),
+        clientVersion: headerValue(request, 'x-stremio-version'),
+        userAgent: headerValue(request, 'user-agent'),
+        ip: request.ip,
+        requestScope: authorized.token!.jti
+      });
+  const deviceId = authorized.token!.deviceId || fallbackIdentity!.id;
+  const deviceIdentitySource = authorized.token!.deviceId
+    ? 'signed_stream_token'
+    : fallbackIdentity!.source;
+  try {
+    const started = await jellyfinPlayback.start({
+      item,
+      file: authorized.file,
+      deviceId,
+      deviceIdentitySource,
+      authorizationExpiresAt: authorized.token!.exp,
+      ...episode
+    });
+    const { token } = createJellyfinMediaToken(
+      started.sessionId,
+      started.resourceId,
+      started.expiresAt,
+      config.streamSecret
+    );
+    return reply
+      .code(302)
+      .header('Location', '/jellyfin-media/' + encodeURIComponent(token))
+      .header('X-Nuvi-Flow-Playback-Id', started.playbackId)
+      .header('Cache-Control', 'no-store')
+      .send();
+  } catch (error) {
+    request.log.warn({
+      media_file_id: authorized.file.id,
+      error: error instanceof Error ? error.name : 'unknown'
+    }, 'Jellyfin playback fell back to the direct local file');
+    return redirectToDirectMedia(reply, streamToken);
+  }
+}
+
+async function serveJellyfinMedia(
+  request: FastifyRequest,
+  reply: FastifyReply,
+  config: AppConfig,
+  jellyfinPlayback: JellyfinPlaybackService,
+  playbackActivity: PlaybackActivityService
+): Promise<FastifyReply> {
+  const { token } = request.params as { token: string };
+  const payload = verifyJellyfinMediaToken(token, config.streamSecret);
+  if (!payload) {
+    return reply.code(401).header('Cache-Control', 'no-store')
+      .send({ error: 'Invalid or expired Jellyfin media token' });
+  }
+  const headers = new Headers();
+  for (const name of [
+    'accept', 'range', 'if-none-match', 'if-modified-since'
+  ]) {
+    const value = headerValue(request, name);
+    if (value) headers.set(name, value);
+  }
+  const abort = new AbortController();
+  request.raw.once('aborted', () => abort.abort());
+  let fetched: Awaited<ReturnType<JellyfinPlaybackService['fetchMedia']>>;
+  try {
+    fetched = await jellyfinPlayback.fetchMedia(
+      payload.sessionId,
+      payload.resourceId,
+      { method: request.method, headers, signal: abort.signal }
+    );
+  } catch (error) {
+    const status = error instanceof JellyfinPlaybackError
+      ? error.statusCode
+      : 502;
+    return reply.code(status === 410 ? 410 : 502)
+      .header('Cache-Control', 'no-store')
+      .send({
+        error: status === 410
+          ? 'Jellyfin playback session has expired.'
+          : 'Jellyfin media could not be fetched.'
+      });
+  }
+  const { response } = fetched;
+  const copyHeader = (name: string): void => {
+    const value = response.headers.get(name);
+    if (value) reply.header(name, value);
+  };
+  for (const name of [
+    'accept-ranges', 'content-range', 'content-disposition', 'etag',
+    'last-modified'
+  ]) copyHeader(name);
+  reply.header('X-Nuvi-Flow-Playback-Id', fetched.playbackId);
+  if (response.status === 304 || response.status === 416) {
+    await response.body?.cancel();
+    fetched.release();
+    copyHeader('content-length');
+    return reply.code(response.status)
+      .header('Cache-Control', 'private, no-store')
+      .send();
+  }
+  if (!response.ok || (response.status >= 300 && response.status < 400)) {
+    await response.body?.cancel();
+    fetched.release();
+    return reply.code(response.status === 404 ? 404 : 502)
+      .header('Cache-Control', 'no-store')
+      .send({ error: 'Jellyfin media could not be fetched.' });
+  }
+  let contentType = response.headers.get('content-type') ||
+    'application/octet-stream';
+  const manifestResponse = /mpegurl/i.test(contentType) ||
+    (() => {
+      try {
+        return new URL(response.url).pathname.toLowerCase().endsWith('.m3u8');
+      } catch {
+        return false;
+      }
+    })();
+  if (manifestResponse) contentType = 'application/vnd.apple.mpegurl';
+  reply.code(response.status)
+    .header('Content-Type', contentType)
+    .header('Cache-Control', 'private, no-store')
+    .header('X-Content-Type-Options', 'nosniff');
+  if (request.method === 'HEAD') {
+    await response.body?.cancel();
+    fetched.release();
+    copyHeader('content-length');
+    return reply.send();
+  }
+  if (manifestResponse) {
+    const activity = playbackActivity.beginJellyfin(payload.sessionId);
+    try {
+      const manifest = await readHlsManifest(response);
+      const rewritten = rewriteHlsManifestWithResolver(
+        manifest,
+        reference => {
+          const child = jellyfinPlayback.registerChildResource(
+            payload.sessionId,
+            payload.resourceId,
+            reference,
+            payload.exp
+          );
+          const { token: childToken } = createJellyfinMediaToken(
+            payload.sessionId,
+            child.resourceId,
+            child.expiresAt,
+            config.streamSecret
+          );
+          return '/jellyfin-media/' + encodeURIComponent(childToken);
+        }
+      );
+      const body = Buffer.from(rewritten);
+      return reply.header('Content-Length', String(body.length)).send(body);
+    } catch (error) {
+      if (error instanceof HlsManifestError ||
+        error instanceof JellyfinPlaybackError) {
+        return reply.code(502)
+          .header('Content-Type', 'application/json; charset=utf-8')
+          .removeHeader('Content-Length')
+          .header('Cache-Control', 'no-store')
+          .send({ error: 'Jellyfin returned an invalid HLS manifest.' });
+      }
+      throw error;
+    } finally {
+      activity?.finish();
+      fetched.release();
+    }
+  }
+  copyHeader('content-length');
+  if (!response.body) {
+    fetched.release();
+    return reply.send();
+  }
+  const stream = Readable.fromWeb(
+    response.body as unknown as NodeReadableStream
+  );
+  const activity = playbackActivity.beginJellyfin(payload.sessionId);
+  if (activity) finishActivityWithStream(activity, stream);
+  stream.once('end', fetched.release);
+  stream.once('close', fetched.release);
+  stream.once('error', fetched.release);
+  request.raw.once('aborted', () => {
+    activity?.finish();
+    fetched.release();
+    if (!stream.destroyed) stream.destroy();
+  });
+  return reply.send(stream);
+}
+
 async function serveSiloMedia(
   request: FastifyRequest,
   reply: FastifyReply,
@@ -688,6 +936,7 @@ export function registerMediaRoutes(
   settings: SettingsService,
   playback: PlaybackService,
   silo: SiloService,
+  jellyfinPlayback: JellyfinPlaybackService,
   fallbackAddon: FallbackAddonService,
   networkProfiles: NetworkProfileStore,
   playbackActivity: PlaybackActivityService
@@ -698,6 +947,40 @@ export function registerMediaRoutes(
   app.head('/media/:token', options, (request, reply) =>
     serveMedia(request, reply, database, config, settings, networkProfiles, playback, playbackActivity));
 
+  app.get(
+    '/jellyfin-stream/:token',
+    options,
+    (request, reply) => serveJellyfinStream(
+      request,
+      reply,
+      database,
+      settings,
+      config,
+      jellyfinPlayback
+    )
+  );
+  app.get(
+    '/jellyfin-media/:token',
+    options,
+    (request, reply) => serveJellyfinMedia(
+      request,
+      reply,
+      config,
+      jellyfinPlayback,
+      playbackActivity
+    )
+  );
+  app.head(
+    '/jellyfin-media/:token',
+    options,
+    (request, reply) => serveJellyfinMedia(
+      request,
+      reply,
+      config,
+      jellyfinPlayback,
+      playbackActivity
+    )
+  );
   app.get(
     '/silo-stream/:token',
     options,

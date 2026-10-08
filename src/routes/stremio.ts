@@ -238,7 +238,10 @@ export function registerStremioRoutes(
           expiry,
           config.streamSecret,
           undefined,
-          { deviceId: deviceIdentity.id }
+          {
+            ...requestedEpisode,
+            deviceId: deviceIdentity.id
+          }
         );
 
       database.sqlite.prepare('INSERT OR IGNORE INTO stream_tokens (jti,media_file_id,expires_at,created_at,revoked) VALUES (?,?,?,?,0)')
@@ -263,72 +266,101 @@ export function registerStremioRoutes(
         }
       };
 
+      const providerStreams: Array<typeof directStream> = [];
+
       if (
-        !settings.siloEnabled ||
-        !settings.siloUrl ||
-        !settings.siloApiKey ||
-        !settings.siloProfileId
+        settings.siloEnabled &&
+        settings.siloUrl &&
+        settings.siloApiKey &&
+        settings.siloProfileId
       ) {
-        return [directStream];
+        const {
+          token: siloToken,
+          payload: siloPayload
+        } = createStreamToken(
+          file.id,
+          expiry,
+          config.streamSecret,
+          undefined,
+          {
+            ...requestedEpisode,
+            deviceId: deviceIdentity.id
+          }
+        );
+
+        database.sqlite.prepare('INSERT OR IGNORE INTO stream_tokens (jti,media_file_id,expires_at,created_at,revoked) VALUES (?,?,?,?,0)')
+          .run(
+            siloPayload.jti,
+            file.id,
+            siloPayload.exp,
+            Date.now()
+          );
+        const siloPolicy = planSiloPlayback(
+          file,
+          settings.siloTranscodeQuality,
+          deviceIdentity.id,
+          deviceCapabilities.getSnapshot(deviceIdentity.id)
+        );
+        const auto = siloPolicy.mode === 'auto-silo';
+
+        providerStreams.push({
+          name: auto ? 'Nuvi-Flow Auto' : 'Silo Transcode',
+          title: auto
+            ? `Auto • up to ${siloPolicy.target.maxResolution} • direct/remux/transcode`
+            : `Silo • ${siloPolicy.requestProfile.qualityPreference} • compatibility HLS`,
+          description: auto
+            ? 'Chooses the highest compatible Silo route, including original playback'
+            : 'Fixed-quality HLS planned by Silo',
+          url:
+            `${settings.baseUrl}/silo-stream/${encodeURIComponent(siloToken)}`,
+          subtitles: subtitles.map((subtitle) => ({
+            id: subtitle.id,
+            lang: subtitle.language || 'und',
+            url:
+              `${settings.baseUrl}/subtitles/${encodeURIComponent(siloToken)}/${encodeURIComponent(subtitle.id)}`
+          })),
+          behaviorHints: {
+            bingeGroup:
+              `nuvi-flow:${file.media_item_id}`,
+            filename:
+              path.basename(file.relative_path),
+            videoSize: file.size
+          }
+        });
       }
 
-      const {
-        token: siloToken,
-        payload: siloPayload
-      } = createStreamToken(
-        file.id,
-        expiry,
-        config.streamSecret,
-        undefined,
-        {
-          ...requestedEpisode,
-          deviceId: deviceIdentity.id
-        }
-      );
-
-      database.sqlite.prepare('INSERT OR IGNORE INTO stream_tokens (jti,media_file_id,expires_at,created_at,revoked) VALUES (?,?,?,?,0)')
-        .run(
-          siloPayload.jti,
-          file.id,
-          siloPayload.exp,
-          Date.now()
-        );
-      const siloPolicy = planSiloPlayback(
-        file,
-        settings.siloTranscodeQuality,
-        deviceIdentity.id,
-        deviceCapabilities.getSnapshot(deviceIdentity.id)
-      );
-      const auto = siloPolicy.mode === 'auto-silo';
-
-      const siloStream = {
-        name: auto ? 'Nuvi-Flow Auto' : 'Silo Transcode',
-        title: auto
-          ? `Auto • up to ${siloPolicy.target.maxResolution} • direct/remux/transcode`
-          : `Silo • ${siloPolicy.requestProfile.qualityPreference} • compatibility HLS`,
-        description: auto
-          ? 'Chooses the highest compatible Silo route, including original playback'
-          : 'Fixed-quality HLS planned by Silo',
-        url:
-          `${settings.baseUrl}/silo-stream/${encodeURIComponent(siloToken)}`,
-        subtitles: subtitles.map((subtitle) => ({
-          id: subtitle.id,
-          lang: subtitle.language || 'und',
+      if (
+        settings.jellyfinEnabled &&
+        settings.jellyfinUrl &&
+        settings.jellyfinApiKey &&
+        settings.jellyfinUserId
+      ) {
+        providerStreams.push({
+          name: 'Jellyfin Auto',
+          title: 'Jellyfin • direct/remux/audio/video fallback',
+          description: 'Uses the exact mapped source and lets Jellyfin choose the least expensive compatible route',
           url:
-            `${settings.baseUrl}/subtitles/${encodeURIComponent(siloToken)}/${encodeURIComponent(subtitle.id)}`
-        })),
-        behaviorHints: {
-          bingeGroup:
-            `nuvi-flow:${file.media_item_id}`,
-          filename:
-            path.basename(file.relative_path),
-          videoSize: file.size
-        }
-      };
+            `${settings.baseUrl}/jellyfin-stream/${encodeURIComponent(token)}`,
+          subtitles: subtitles.map((subtitle) => ({
+            id: subtitle.id,
+            lang: subtitle.language || 'und',
+            url:
+              `${settings.baseUrl}/subtitles/${encodeURIComponent(token)}/${encodeURIComponent(subtitle.id)}`
+          })),
+          behaviorHints: {
+            bingeGroup:
+              `nuvi-flow:${file.media_item_id}`,
+            filename:
+              path.basename(file.relative_path),
+            videoSize: file.size
+          }
+        });
+      }
 
+      if (providerStreams.length === 0) return [directStream];
       return settings.showDirectPlay
-        ? [directStream, siloStream]
-        : [siloStream];
+        ? [directStream, ...providerStreams]
+        : providerStreams;
     });
     reply.header('Cache-Control', 'no-store').send({ streams });
   });

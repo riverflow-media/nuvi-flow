@@ -4,7 +4,8 @@ import {
   isHlsManifestPath,
   parseHlsSegmentTimeline,
   readHlsManifest,
-  rewriteHlsManifest
+  rewriteHlsManifest,
+  rewriteHlsManifestWithResolver
 } from '../src/services/playback/hls-proxy.js';
 
 describe('HLS proxy helpers', () => {
@@ -39,6 +40,22 @@ describe('HLS proxy helpers', () => {
       'proxy(/api/v1/playback/transcode/session-1/video/index.m3u8?variant=high)',
       ''
     ].join('\n'));
+  });
+
+  it('uses the provider-neutral resolver for lines and URI attributes', () => {
+    const seen: string[] = [];
+    const rewritten = rewriteHlsManifestWithResolver([
+      '#EXTM3U',
+      '#EXT-X-KEY:METHOD=AES-128,URI="key.bin?part=1"',
+      'segment.ts?part=2'
+    ].join('\n'), reference => {
+      seen.push(reference);
+      return `/provider/${seen.length}`;
+    });
+
+    expect(seen).toEqual(['key.bin?part=1', 'segment.ts?part=2']);
+    expect(rewritten).toContain('URI="/provider/1"');
+    expect(rewritten).toContain('\n/provider/2');
   });
 
   it('rejects off-origin and out-of-session media references', () => {

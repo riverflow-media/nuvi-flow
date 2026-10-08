@@ -11,6 +11,7 @@ import type { PlaybackService } from './playback/playback-service.js';
 import type { DatabaseBackupService } from './database-backups.js';
 import type { PlaybackServersService } from './playback-servers.js';
 import type { PlaybackServerMappingSummary } from './playback-server-mappings.js';
+import type { JellyfinPlaybackService } from './playback/jellyfin-playback.js';
 
 export type SystemDiagnosticStatus =
   | 'healthy'
@@ -47,6 +48,7 @@ export interface SystemDiagnosticsSnapshot {
       maxConcurrentStarts: number;
       maxQueuedStarts: number;
     };
+    jellyfin: { active: number; pending: number; transfers: number };
     fallback: { active: number; transfers: number };
   };
   recentOutcomes: {
@@ -124,6 +126,7 @@ export class SystemDiagnosticsService {
     private readonly playbackOutcomes: PlaybackOutcomeStore,
     private readonly databaseBackups: DatabaseBackupService,
     private readonly playbackServers: PlaybackServersService,
+    private readonly jellyfinPlayback: JellyfinPlaybackService,
     private readonly config: AppConfig,
     options: SystemDiagnosticsOptions = {}
   ) {
@@ -175,6 +178,7 @@ export class SystemDiagnosticsService {
       Promise.resolve(this.outcomeCheck(recentOutcomes))
     ]);
     const operations = this.playback.operationsSnapshot();
+    const jellyfin = this.jellyfinPlayback.counts();
     const fallback = this.fallbackAddon.counts();
     const scan = this.scanner.snapshot();
     const status = checks.some(check => check.status === 'error')
@@ -204,6 +208,7 @@ export class SystemDiagnosticsService {
           maxConcurrentStarts: operations.starts.maxConcurrent,
           maxQueuedStarts: operations.starts.maxQueued
         },
+        jellyfin,
         fallback
       },
       recentOutcomes

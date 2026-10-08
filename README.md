@@ -271,10 +271,10 @@ For exact-path matching to work, the same media file must have the same containe
 ### Jellyfin and Plex playback servers
 
 Nuvi-Flow is expanding the proven Silo orchestration model to optional Jellyfin
-and Plex Media Server backends. Completed foundations include authenticated,
-server-side-only credentials, connection discovery, a Jellyfin playback-user
-selector, Plex library discovery, exact provider media mapping, and on-demand
-System Health checks under **Settings → Servers**.
+and Plex Media Server backends. The Jellyfin control plane and playback path are
+complete; Plex currently has authenticated discovery and exact media mapping.
+Both are configured under **Settings → Servers** with server-side-only
+credentials and on-demand System Health checks.
 
 Mapping uses the authenticated server identity plus exact normalized file paths.
 Jellyfin mappings retain the item and media-source IDs; Plex mappings retain the
@@ -284,12 +284,25 @@ differ, add one `local => provider` prefix rule per line and use **Refresh exact
 mappings**; readiness is shown only as aggregate counts so paths and provider
 IDs never enter diagnostics.
 
-Playback routing remains intentionally staged. Jellyfin playback/proxying comes
-next, followed by Plex playback/proxying, and only then unified automatic
-provider selection. Each provider must keep the same direct-first order: Direct
-Play, remux/Direct Stream, audio-only conversion, then video transcoding.
-Nuvi-Flow will ask the selected server to make and run the media conversion
-decision rather than introducing another FFmpeg pipeline.
+When Jellyfin is enabled with a playback user, each local stream gets a
+**Jellyfin Auto** entry. Jellyfin negotiation proceeds only when that file has
+an exact mapping. Nuvi-Flow sends a bounded profile derived from the
+pseudonymous device capability snapshot to Jellyfin `PlaybackInfo` and accepts
+only same-origin decisions for the exact mapped item/media source. The
+order remains Direct Play, remux/Direct Stream, audio-only conversion, then
+video transcoding, retaining 4K when the source remains viable. Nuvi-Flow asks
+Jellyfin to run any conversion rather than introducing another FFmpeg pipeline.
+
+Direct/progressive and HLS responses are proxied through expiring opaque
+Nuvi-Flow URLs. Range and validator behavior is preserved, nested HLS resources
+are re-signed, and the Jellyfin API key never enters a player URL. Sessions are
+single-flight and reusable for the same device/capability/mapping context, are
+visible and stoppable in **Activity**, and are retired on expiry or shutdown.
+If exact mapping or negotiation is unavailable, the Jellyfin entry falls back
+to the authorized local direct file.
+
+Plex playback/proxying is the next milestone, followed by unified automatic
+provider selection. Every provider must preserve the same direct-first order.
 
 Plex support is designed to require no Plex Pass. The compatibility baseline is
 Direct Play, Direct Stream/remux, and Plex's free software transcoding. Hardware
@@ -695,7 +708,7 @@ Common environment variables include:
 | `SILO_MAX_CONCURRENT_STARTS` | Maximum distinct Silo start negotiations running at once, 1–8; default `2` |
 | `SILO_MAX_QUEUED_STARTS` | Additional distinct Silo starts allowed to wait FIFO, 0–32; default `4` |
 | `SILO_START_QUEUE_TIMEOUT_MS` | Maximum queue wait before Auto fallback or a retryable response, 1,000–60,000 ms; default `15000` |
-| `JELLYFIN_ENABLED` | Enable the staged Jellyfin playback-server integration; default `false` |
+| `JELLYFIN_ENABLED` | Enable Jellyfin exact-mapped Auto playback; default `false` |
 | `JELLYFIN_URL` | Internal Jellyfin base URL, such as `http://jellyfin:8096` |
 | `JELLYFIN_API_KEY` | Jellyfin API key; kept server-side and never returned to the browser |
 | `JELLYFIN_USER_ID` | Jellyfin user whose permissions and playback decisions will apply |
@@ -704,7 +717,7 @@ Common environment variables include:
 | `PLEX_URL` | Internal Plex base URL, such as `http://plex:32400` |
 | `PLEX_TOKEN` | Plex authentication token; kept server-side and never returned to the browser |
 | `PLEX_PATH_MAPPINGS` | Optional newline-separated absolute `Nuvi-Flow path => Plex path` prefix rules for exact media mapping |
-| `SHOW_DIRECT_PLAY` | Show a separate original-file Direct entry when Silo is available; default `true` |
+| `SHOW_DIRECT_PLAY` | Show a separate original-file Direct entry when a playback server is available; default `true` |
 | `FALLBACK_ADDON_ENABLED` | Enable the optional pre-transcode fallback addon; default `false` |
 | `FALLBACK_ADDON_MANIFEST_URL` | Private installed manifest URL for AIOStreams or another Stremio-compatible stream addon; never returned to the browser |
 | `FALLBACK_ADDON_TIMEOUT_MS` | Manifest/stream lookup timeout from 1,000–15,000 ms; default `5000` |

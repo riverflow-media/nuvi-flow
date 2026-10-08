@@ -337,6 +337,205 @@ describe('Stremio and media HTTP endpoints', () => {
     expect(invalid.headers['content-range']).toBe('bytes */36');
   });
 
+  it('advertises and securely proxies exact Jellyfin direct play with ranges', async () => {
+    built.settings.set('jellyfinEnabled', 'true');
+    built.settings.set('jellyfinUrl', 'http://jellyfin:8096');
+    built.settings.set('jellyfinApiKey', 'private-jellyfin-key');
+    built.settings.set('jellyfinUserId', 'user-1');
+    vi.spyOn(built.playbackServers, 'resolveMapping').mockResolvedValue({
+      media_file_id: 'file1',
+      provider: 'jellyfin',
+      server_key: 'jellyfin:server-hash',
+      provider_item_id: 'item-1',
+      provider_media_id: 'source-1',
+      provider_stream_path: null,
+      status: 'mapped',
+      reason: null,
+      mapped_path: mediaPath,
+      updated_at: Date.now()
+    });
+    const fetchMock = vi.fn().mockImplementation(async (
+      input: string | URL | Request,
+      init?: RequestInit
+    ) => {
+      const url = String(input);
+      if (url.endsWith('/Items/item-1/PlaybackInfo')) {
+        return new Response(JSON.stringify({
+          PlaySessionId: 'jellyfin-play-1',
+          MediaSources: [{
+            Id: 'source-1',
+            SupportsDirectPlay: true,
+            SupportsDirectStream: true,
+            SupportsTranscoding: true,
+            TranscodingUrl: '/Videos/item-1/master.m3u8?api_key=never-visible'
+          }]
+        }), { status: 200, headers: { 'content-type': 'application/json' } });
+      }
+      if (url.includes('/Videos/item-1/stream')) {
+        expect(new Headers(init?.headers).get('range')).toBe('bytes=10-19');
+        return new Response('abcdefghij', {
+          status: 206,
+          headers: {
+            'content-type': 'video/mp4',
+            'content-range': 'bytes 10-19/36',
+            'content-length': '10',
+            'accept-ranges': 'bytes'
+          }
+        });
+      }
+      if (url.endsWith('/Sessions/Playing') ||
+        url.endsWith('/Sessions/Playing/Stopped')) {
+        return new Response(null, { status: 204 });
+      }
+      return new Response(null, { status: 404 });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const listed = await built.app.inject({
+      method: 'GET',
+      url: addonUrl('/stream/movie/tt1234567.json'),
+      headers: { 'x-nuvi-flow-device-id': 'living-room' }
+    });
+    expect(listed.statusCode).toBe(200);
+    expect(listed.json().streams).toHaveLength(2);
+    expect(listed.json().streams[1]).toMatchObject({
+      name: 'Jellyfin Auto',
+      title: 'Jellyfin • direct/remux/audio/video fallback'
+    });
+    const negotiationPath = new URL(listed.json().streams[1].url).pathname;
+    const negotiated = await built.app.inject({
+      method: 'GET',
+      url: negotiationPath
+    });
+    expect(negotiated.statusCode).toBe(302);
+    expect(negotiated.headers.location).toMatch(/^\/jellyfin-media\//);
+    expect(negotiated.headers.location).not.toContain('private-jellyfin-key');
+
+    const proxied = await built.app.inject({
+      method: 'GET',
+      url: negotiated.headers.location!,
+      headers: { range: 'bytes=10-19' }
+    });
+    expect(proxied.statusCode).toBe(206);
+    expect(proxied.body).toBe('abcdefghij');
+    expect(proxied.headers['content-range']).toBe('bytes 10-19/36');
+    expect(proxied.headers['x-nuvi-flow-playback-id']).toBe(
+      negotiated.headers['x-nuvi-flow-playback-id']
+    );
+    const mediaCall = fetchMock.mock.calls.find(([input]) =>
+      String(input).includes('/Videos/item-1/stream')
+    )!;
+    expect(String(mediaCall[0])).not.toContain('private-jellyfin-key');
+    expect(new Headers(mediaCall[1]?.headers).get('X-Emby-Token'))
+      .toBe('private-jellyfin-key');
+    expect(await built.playbackActivity.snapshot()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          playbackId: negotiated.headers['x-nuvi-flow-playback-id'],
+          provider: 'jellyfin',
+          route: 'original_http'
+        })
+      ])
+    );
+    await built.jellyfinPlayback.stopPlayback(
+      String(negotiated.headers['x-nuvi-flow-playback-id'])
+    );
+  });
+
+  it('rewrites Jellyfin HLS children behind signed same-origin proxy URLs', async () => {
+    built.settings.set('jellyfinEnabled', 'true');
+    built.settings.set('jellyfinUrl', 'http://jellyfin:8096');
+    built.settings.set('jellyfinApiKey', 'private-jellyfin-key');
+    built.settings.set('jellyfinUserId', 'user-1');
+    vi.spyOn(built.playbackServers, 'resolveMapping').mockResolvedValue({
+      media_file_id: 'file1',
+      provider: 'jellyfin',
+      server_key: 'jellyfin:server-hash',
+      provider_item_id: 'item-1',
+      provider_media_id: 'source-1',
+      provider_stream_path: null,
+      status: 'mapped',
+      reason: null,
+      mapped_path: mediaPath,
+      updated_at: Date.now()
+    });
+    const fetchMock = vi.fn().mockImplementation(async (
+      input: string | URL | Request
+    ) => {
+      const url = String(input);
+      if (url.endsWith('/Items/item-1/PlaybackInfo')) {
+        return new Response(JSON.stringify({
+          PlaySessionId: 'jellyfin-play-hls',
+          MediaSources: [{
+            Id: 'source-1',
+            SupportsDirectPlay: false,
+            SupportsDirectStream: true,
+            SupportsTranscoding: true,
+            TranscodingSubProtocol: 'hls',
+            TranscodingUrl: '/Videos/item-1/hls1/main/master.m3u8?VideoCodec=h264&AudioCodec=aac&api_key=root-secret'
+          }]
+        }), { status: 200, headers: { 'content-type': 'application/json' } });
+      }
+      if (url.includes('/Videos/item-1/hls1/main/master.m3u8')) {
+        return new Response([
+          '#EXTM3U',
+          '#EXT-X-KEY:METHOD=AES-128,URI="key.bin?api_key=child-secret"',
+          '../0.ts?part=1'
+        ].join('\n'), {
+          status: 200,
+          headers: { 'content-type': 'application/vnd.apple.mpegurl' }
+        });
+      }
+      if (url.includes('/Videos/item-1/hls1/0.ts?part=1')) {
+        return new Response('segment-data', {
+          status: 200,
+          headers: { 'content-type': 'video/mp2t' }
+        });
+      }
+      if (url.endsWith('/Sessions/Playing') ||
+        url.endsWith('/Sessions/Playing/Stopped') ||
+        url.includes('/Videos/ActiveEncodings')) {
+        return new Response(null, { status: 204 });
+      }
+      return new Response(null, { status: 404 });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const listed = await built.app.inject({
+      method: 'GET',
+      url: addonUrl('/stream/movie/tt1234567.json')
+    });
+    const negotiationPath = new URL(listed.json().streams[1].url).pathname;
+    const negotiated = await built.app.inject({
+      method: 'GET',
+      url: negotiationPath
+    });
+    const manifest = await built.app.inject({
+      method: 'GET',
+      url: negotiated.headers.location!
+    });
+    expect(manifest.statusCode).toBe(200);
+    expect(manifest.headers['content-type']).toContain('mpegurl');
+    expect(manifest.body).not.toContain('jellyfin:8096');
+    expect(manifest.body).not.toContain('api_key');
+    expect(manifest.body).not.toContain('secret');
+    const childPath = manifest.body.split('\n').find(line =>
+      line.startsWith('/jellyfin-media/')
+    );
+    expect(childPath).toBeTruthy();
+    const segment = await built.app.inject({ method: 'GET', url: childPath! });
+    expect(segment.statusCode).toBe(200);
+    expect(segment.body).toBe('segment-data');
+    const childCall = fetchMock.mock.calls.find(([input]) =>
+      String(input).includes('/Videos/item-1/hls1/0.ts')
+    )!;
+    expect(String(childCall[0])).toContain('part=1');
+    expect(String(childCall[0])).not.toContain('api_key');
+    await built.jellyfinPlayback.stopPlayback(
+      String(negotiated.headers['x-nuvi-flow-playback-id'])
+    );
+  });
+
   it('proxies signed Silo media with server-side authentication', async () => {
     const fetchMock = vi.fn().mockResolvedValue(
       new Response(

@@ -107,6 +107,38 @@ function rewriteReference(
 }
 
 /**
+ * Provider-neutral HLS rewriting primitive. The resolver owns URL validation
+ * and returns an application proxy URL for each authorized child resource.
+ */
+export function rewriteHlsManifestWithResolver(
+  manifest: string,
+  resolveReference: (reference: string) => string
+): string {
+  return manifest.split('\n').map(line => {
+    const trimmed = line.trim();
+
+    if (!trimmed) return line;
+
+    if (!trimmed.startsWith('#')) {
+      const rewritten = resolveReference(trimmed);
+      const start = line.indexOf(trimmed);
+      return line.slice(0, start) + rewritten + line.slice(start + trimmed.length);
+    }
+
+    return line.replace(
+      /\bURI=(?:"([^"]*)"|([^,\s]*))/g,
+      (_attribute, quoted: string | undefined, unquoted: string | undefined) => {
+        const reference = quoted ?? unquoted ?? '';
+        const rewritten = resolveReference(reference);
+        return quoted === undefined
+          ? `URI=${rewritten}`
+          : `URI="${rewritten}"`;
+      }
+    );
+  }).join('\n');
+}
+
+/**
  * Rewrites both ordinary playlist URI lines and URI attributes used by master
  * playlists, encryption keys, initialization maps, subtitles, and low-latency
  * HLS hints. Every rewritten target must remain on the configured Silo origin
@@ -118,38 +150,15 @@ export function rewriteHlsManifest(
   siloBaseUrl: string,
   proxyUrl: (path: string) => string
 ): string {
-  return manifest.split('\n').map(line => {
-    const trimmed = line.trim();
-
-    if (!trimmed) return line;
-
-    if (!trimmed.startsWith('#')) {
-      const rewritten = rewriteReference(
-        trimmed,
-        sourcePath,
-        siloBaseUrl,
-        proxyUrl
-      );
-      const start = line.indexOf(trimmed);
-      return line.slice(0, start) + rewritten + line.slice(start + trimmed.length);
-    }
-
-    return line.replace(
-      /\bURI=(?:"([^"]*)"|([^,\s]*))/g,
-      (_attribute, quoted: string | undefined, unquoted: string | undefined) => {
-        const reference = quoted ?? unquoted ?? '';
-        const rewritten = rewriteReference(
-          reference,
-          sourcePath,
-          siloBaseUrl,
-          proxyUrl
-        );
-        return quoted === undefined
-          ? `URI=${rewritten}`
-          : `URI="${rewritten}"`;
-      }
-    );
-  }).join('\n');
+  return rewriteHlsManifestWithResolver(
+    manifest,
+    reference => rewriteReference(
+      reference,
+      sourcePath,
+      siloBaseUrl,
+      proxyUrl
+    )
+  );
 }
 
 export async function readHlsManifest(
